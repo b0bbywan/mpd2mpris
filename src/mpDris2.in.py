@@ -598,7 +598,7 @@ class MPDWrapper(object):
             if not any([song_url.startswith(prefix) for prefix in urlhandlers]):
                 song_url = os.path.join(self._params['music_dir'], song_url)
             self._metadata['xesam:url'] = song_url
-            cover = self.find_cover(song_url, mpd_meta['file'])
+            cover = self.find_cover(song_url, mpd_meta['file'], mpd_meta)
             if cover:
                 self._metadata['mpris:artUrl'] = cover
 
@@ -686,7 +686,7 @@ class MPDWrapper(object):
         else:
             self.notify_about_track(self.metadata, state)
 
-    def find_cover(self, song_url, song_file=None):
+    def find_cover(self, song_url, song_file=None, mpd_meta=None):
         if song_url.startswith('file://'):
             song_path = song_url[7:]
         elif song_url.startswith('local:track:') and self._params['music_dir'].startswith('file://'):
@@ -708,7 +708,7 @@ class MPDWrapper(object):
 
         # Fetch cover art from MPD (works with remote servers)
         if song_file:
-            cover = self._fetch_cover_from_mpd(song_url, song_file)
+            cover = self._fetch_cover_from_mpd(song_url, song_file, mpd_meta)
             if cover:
                 return cover
 
@@ -781,30 +781,30 @@ class MPDWrapper(object):
 
         return None
 
-    def _fetch_cover_from_mpd(self, song_url, song_file):
+    def _fetch_cover_from_mpd(self, song_url, song_file, mpd_meta=None):
         """Fetch cover art from MPD using readpicture or albumart commands.
 
         Note: This is called from update_metadata during event processing,
         when idle mode is already left. We must use self.client directly
         instead of self.call() to avoid idle_leave/idle_enter conflicts.
         """
-        data = None
+        # Skip URIs with schemes (cdda://, http://, etc.) as they cause
+        # timeouts that corrupt the MPD connection
+        if not re.match(r'^[a-zA-Z]+://', song_file):
+            data = self._try_mpd_art(song_file)
+        else:
+            data = None
 
-        if self._can_readpicture:
-            try:
-                result = self.client.readpicture(song_file)
-                if result and 'binary' in result:
-                    data = result['binary']
-            except Exception as e:
-                logger.debug("readpicture failed: %r" % e)
+        # Fallback: search MPD database for an alternative path (e.g. CUE
+        # virtual tracks when currentsong returns a cdda:// URI)
+        if data is None and mpd_meta:
+            alt_file = self._find_alt_path(mpd_meta)
+            if alt_file and alt_file != song_file:
+                data = self._try_mpd_art(alt_file)
 
-        if data is None and self._can_albumart:
-            try:
-                result = self.client.albumart(song_file)
-                if result and 'binary' in result:
-                    data = result['binary']
-            except Exception as e:
-                logger.debug("albumart failed: %r" % e)
+            # Last resort: look for a cover image file in the parent directory
+            if data is None and alt_file:
+                data = self._try_mpd_dir_art(alt_file)
 
         if data is None:
             return None
@@ -821,6 +821,82 @@ class MPDWrapper(object):
         pic = type('Picture', (), {'mime': mime, 'data': data})()
         self._temp_song_url = song_url
         return self._create_temp_cover(pic)
+
+    def _try_mpd_art(self, path):
+        """Try readpicture then albumart on a given path, return binary data or None."""
+        if self._can_readpicture:
+            try:
+                result = self.client.readpicture(path)
+                if result and 'binary' in result:
+                    return result['binary']
+            except Exception as e:
+                logger.debug("readpicture %r failed: %r" % (path, e))
+
+        if self._can_albumart:
+            try:
+                result = self.client.albumart(path)
+                if result and 'binary' in result:
+                    return result['binary']
+            except Exception as e:
+                logger.debug("albumart %r failed: %r" % (path, e))
+
+        return None
+
+    def _find_alt_path(self, mpd_meta):
+        """Find an alternative file path using lastloadedplaylist from status,
+        or by searching the MPD database as a fallback."""
+        # Use lastloadedplaylist to derive the CUE virtual track path
+        playlist = self._status.get('lastloadedplaylist', '')
+        if playlist and 'track' in mpd_meta:
+            # Strip music_dir prefix to get the relative path
+            music_dir = self._params['music_dir']
+            if music_dir.startswith('file://'):
+                music_dir = music_dir[7:]
+            if playlist.startswith(music_dir):
+                playlist = playlist[len(music_dir):]
+            playlist = playlist.lstrip('/')
+            track_num = re.match(r'^(\d+)', str(mpd_meta['track']))
+            if track_num:
+                alt = "%s/track%04d" % (playlist, int(track_num.group(1)))
+                logger.debug("Trying alt path from lastloadedplaylist: %r" % alt)
+                return alt
+
+        # Fallback: search MPD database
+        try:
+            args = []
+            if 'album' in mpd_meta:
+                args += ['album', mpd_meta['album']]
+            if 'title' in mpd_meta:
+                args += ['title', mpd_meta['title']]
+            if not args:
+                return None
+
+            results = self.client.find(*args)
+            if results:
+                return results[0].get('file')
+        except Exception as e:
+            logger.debug("MPD find for alt path failed: %r" % e)
+
+        return None
+
+    def _try_mpd_dir_art(self, track_path):
+        """Try albumart on common cover filenames in parent directories."""
+        cover_names = ['cover.jpg', 'cover.png', 'cover.webp']
+
+        # Try parent directories (handles CUE virtual paths like
+        # .disc-cuer/HASH/playlist.cue/track0005)
+        parent = track_path
+        for _ in range(3):
+            parent = os.path.dirname(parent)
+            if not parent:
+                break
+            for name in cover_names:
+                cover_path = os.path.join(parent, name)
+                data = self._try_mpd_art(cover_path)
+                if data:
+                    return data
+
+        return None
 
     def _create_temp_cover(self, pic):
         """
