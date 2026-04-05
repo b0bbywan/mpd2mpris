@@ -2,6 +2,8 @@
 Description=mpDris2 - Music Player Daemon D-Bus bridge
 After=mpd.service
 BindsTo=mpd.service
+ConditionUser=!root
+ConditionUser=!@system
 
 [Service]
 Restart=on-failure
