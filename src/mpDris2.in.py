@@ -247,6 +247,8 @@ class MPDWrapper(object):
 
         self._can_single = False
         self._can_idle = False
+        self._can_albumart = False
+        self._can_readpicture = False
 
         self._errors = 0
         self._poll_id = None
@@ -309,6 +311,12 @@ class MPDWrapper(object):
             # added in 0.15
             if 'single' in commands:
                 self._can_single = True
+            # added in 0.21
+            if 'albumart' in commands:
+                self._can_albumart = True
+            # added in 0.22
+            if 'readpicture' in commands:
+                self._can_readpicture = True
 
             if self._errors > 0:
                 notification.notify(identity, _('Reconnected'))
@@ -590,7 +598,7 @@ class MPDWrapper(object):
             if not any([song_url.startswith(prefix) for prefix in urlhandlers]):
                 song_url = os.path.join(self._params['music_dir'], song_url)
             self._metadata['xesam:url'] = song_url
-            cover = self.find_cover(song_url)
+            cover = self.find_cover(song_url, mpd_meta['file'])
             if cover:
                 self._metadata['mpris:artUrl'] = cover
 
@@ -678,15 +686,15 @@ class MPDWrapper(object):
         else:
             self.notify_about_track(self.metadata, state)
 
-    def find_cover(self, song_url):
+    def find_cover(self, song_url, song_file=None):
         if song_url.startswith('file://'):
             song_path = song_url[7:]
         elif song_url.startswith('local:track:') and self._params['music_dir'].startswith('file://'):
             song_path = os.path.join(self._params['music_dir'][7:], urllib.parse.unquote(song_url[12:]))
         else:
-            return None
+            song_path = None
 
-        song_dir = os.path.dirname(song_path)
+        song_dir = os.path.dirname(song_path) if song_path else None
 
         # Try existing temporary file
         if self._temp_cover:
@@ -697,6 +705,15 @@ class MPDWrapper(object):
                 logger.debug("find_cover: Cleaning up old image at %r" % self._temp_cover.name)
                 self._temp_song_url = None
                 self._temp_cover.close()
+
+        # Fetch cover art from MPD (works with remote servers)
+        if song_file:
+            cover = self._fetch_cover_from_mpd(song_url, song_file)
+            if cover:
+                return cover
+
+        if song_path is None:
+            return None
 
         # Search for embedded cover art
         song = None
@@ -763,6 +780,47 @@ class MPDWrapper(object):
                     return 'file://' + f
 
         return None
+
+    def _fetch_cover_from_mpd(self, song_url, song_file):
+        """Fetch cover art from MPD using readpicture or albumart commands.
+
+        Note: This is called from update_metadata during event processing,
+        when idle mode is already left. We must use self.client directly
+        instead of self.call() to avoid idle_leave/idle_enter conflicts.
+        """
+        data = None
+
+        if self._can_readpicture:
+            try:
+                result = self.client.readpicture(song_file)
+                if result and 'binary' in result:
+                    data = result['binary']
+            except Exception as e:
+                logger.debug("readpicture failed: %r" % e)
+
+        if data is None and self._can_albumart:
+            try:
+                result = self.client.albumart(song_file)
+                if result and 'binary' in result:
+                    data = result['binary']
+            except Exception as e:
+                logger.debug("albumart failed: %r" % e)
+
+        if data is None:
+            return None
+
+        if data[:8] == b'\x89PNG\r\n\x1a\n':
+            mime = 'image/png'
+        elif data[:2] == b'\xff\xd8':
+            mime = 'image/jpeg'
+        elif data[:4] == b'GIF8':
+            mime = 'image/gif'
+        else:
+            mime = 'image/jpeg'
+
+        pic = type('Picture', (), {'mime': mime, 'data': data})()
+        self._temp_song_url = song_url
+        return self._create_temp_cover(pic)
 
     def _create_temp_cover(self, pic):
         """
