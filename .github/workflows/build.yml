@@ -41,18 +41,75 @@ jobs:
           name: mpDris2
           path: release/
 
+  deb:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Debian build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential debhelper dh-python \
+            autoconf automake gettext intltool \
+            python3 devscripts
+
+      - name: Sync changelog with tag version
+        env:
+          DEBFULLNAME: GitHub Actions
+          DEBEMAIL: actions@github.com
+        run: |
+          # Strip leading 'v' from git tag (v0.9.2 → 0.9.2)
+          TAG_RAW="${GITHUB_REF_NAME#v}"
+          # Format 3.0 (native) forbids '-' in versions: convert prerelease
+          # suffixes (-rc1, -beta1, -alpha1) to the Debian tilde form
+          # (~rc1 etc.) which sorts before the final release.
+          TAG_VERSION="$(echo "${TAG_RAW}" | sed -E 's/-(rc|beta|alpha)/~\1/')"
+          CL_VERSION="$(dpkg-parsechangelog -S Version)"
+          if [ "${TAG_VERSION}" != "${CL_VERSION}" ]; then
+            echo "Tag ${TAG_VERSION} differs from changelog ${CL_VERSION} — prepending entry"
+            dch --newversion "${TAG_VERSION}" --distribution unstable --urgency medium \
+              "Release ${TAG_VERSION}"
+          else
+            echo "Tag matches changelog (${CL_VERSION})"
+          fi
+
+      - name: Build .deb
+        run: dpkg-buildpackage -b -us -uc
+
+      - name: Collect .deb
+        run: |
+          mkdir -p deb
+          mv ../*.deb deb/
+          ls -lh deb/
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: mpdris2-deb
+          path: deb/*.deb
+
   release:
-    needs: build
+    needs: [build, deb]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download artifacts
+      - name: Download tarball assets
         uses: actions/download-artifact@v6
         with:
           name: mpDris2
           path: release
+
+      - name: Download .deb
+        uses: actions/download-artifact@v6
+        with:
+          name: mpdris2-deb
+          path: deb
 
       - name: Create release archive
         run: tar czf mpDris2-${GITHUB_REF_NAME#v}.tar.gz -C release .
@@ -60,5 +117,21 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: mpDris2-*.tar.gz
+          files: |
+            mpDris2-*.tar.gz
+            deb/*.deb
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+
+  notify-apt-repo:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger apt-repo rebuild
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.APT_REPO_TOKEN }}
+          repository: b0bbywan/odio-apt-repo
+          event-type: release-published
+          client-payload: '{"repo": "${{ github.repository }}", "tag": "${{ github.ref_name }}"}'

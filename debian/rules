@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+
+# must be before including anything
+debian_dir := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+
+include /usr/share/dpkg/default.mk
+
+%:
+	dh $@ --with python3
+
+override_dh_autoreconf:
+	NOCONFIGURE=1 dh_autoreconf ./autogen.sh --
+
+override_dh_auto_configure:
+	dh_auto_configure \
+		PYTHON=/usr/bin/python3 \
+		$(NULL)
+
+override_dh_auto_build:
+	dh_auto_build
+	sed -e 's!@docdir@!/usr/share/doc/mpdris2!' \
+		< debian/mpDris2.1.in \
+		> debian/mpDris2.1
+
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp
+	sed -i -e '1s,.*,#!/usr/bin/python3,' debian/tmp/usr/bin/mpDris2
+
+override_dh_install:
+	rm -f debian/tmp/usr/share/doc/mpdris2/COPYING
+	dh_install

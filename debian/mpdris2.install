@@ -1,0 +1,9 @@
+etc/xdg/autostart
+usr/bin
+usr/lib/systemd/user
+usr/share/applications
+usr/share/dbus-1/services
+usr/share/doc/mpdris2/AUTHORS
+usr/share/doc/mpdris2/README
+usr/share/doc/mpdris2/mpDris2.conf
+usr/share/locale
