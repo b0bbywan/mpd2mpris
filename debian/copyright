@@ -1,0 +1,35 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: mpDris2
+Source: https://github.com/b0bbywan/mpDris2
+
+Files: *
+Copyright:
+    © Erik Karlsson
+    © Jean-Philippe Braun
+    © Christoph Reiter
+    © Mantas Mikulėnas
+    © Mathieu Réquillart
+License: GPL-3+
+
+Files: debian/*
+Copyright:
+ © 2012-2016 Simon McVittie
+ © 2026 Mathieu Réquillart
+License: GPL-3+
+Comment:
+ Original Debian packaging by Simon McVittie for the Debian project.
+ Adapted for the b0bbywan/mpDris2 fork.
+
+License: GPL-3+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+  .
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+  GNU General Public License for more details.
+  .
+  On Debian systems a copy of the GNU General Public License, version 3
+  can be found in /usr/share/common-licenses/GPL-3.

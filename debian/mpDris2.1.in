@@ -1,0 +1,61 @@
+.TH MPDRIS2 1 "September 2012" "" "D-Bus services"
+\" This man page was written by Simon McVittie for the Debian project,
+\" but may be used by others.
+\" Copyright © 2012 Simon McVittie
+\" It may be distributed under the same terms as mpDris2 itself.
+.SH NAME
+mpDris2 \- media player interface (MPRIS2) bridge for MPD
+.SH SYNOPSIS
+.BR mpDris2
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B mpDris2
+is an implementation of the MPRIS2 media player interface as a
+client for MPD, allowing MPRIS2 clients to control MPD and observe its
+track changes via a standard D-Bus interface.
+.PP
+It can also respond to multimedia keys if running under GNOME,
+and send track-change notifications if python-notify is installed.
+.PP
+It is normally run automatically via D-Bus service activation. On systems
+following the freedesktop.org Desktop Application Autostart Specification,
+it will be run automatically on login.
+.SH CONFIGURATION
+\fBmpDris2\fR is normally configured via the file
+\fIXDG_CONFIG_DIRS\fB/mpDris2/mpDris2.conf\fR (typically
+\fB~/.config/mpDris2/mpDris2.conf\fR),
+whose contents are documented in \fB@docdir@/README\fR.
+Settings in this configuration file can be overridden by command-line
+options and environment variables.
+.SH OPTIONS
+.TP
+\fB-p\fR \fIPATH\fR, \fB--path=\fIPATH\fR
+Set the location of the directory from which mpd reads music, overriding
+the configuration file. The default is to use the path specified in the
+configuration file, or try some likely directories (\fIXDG_MUSIC_DIR\fR from
+the environment or \fIXDG_CONFIG_DIRS\fB/user-dirs.dirs\fR, \fB~/Music\fR,
+\fB~/music\fR).
+.TP
+\fB-h\fR, \fB--help\fR
+Show a help message
+.TP
+\fB-d\fR, \fB--debug\fR
+Emit debug logging messages
+.SH ENVIRONMENT
+.TP
+\fBXDG_CONFIG_HOME\fR=\fIDIRECTORY\fR, \fBXDG_CONFIG_DIRS\fR=\fISEARCHPATH\fR
+Used to find the configuration file
+\fIXDG_CONFIG_DIRS\fB/mpDris2/mpDris2.conf\fR according to the
+XDG Base Directory Specification.
+.TP
+\fBMPD_HOST\fR=\fIHOSTNAME\fR
+Set the hostname of the mpd server, overriding the configuration file.
+.TP
+\fBMPD_PORT\fR=\fIPORT\fR
+Set the port number of the mpd server, overriding the configuration file.
+.TP
+\fBXDG_MUSIC_DIR\fR=\fIDIRECTORY\fR
+Used to find the default music directory if not specified in the
+configuration file or as a command-line option.
+.SH SEE ALSO
+.BR mpd (1)

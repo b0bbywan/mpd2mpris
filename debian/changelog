@@ -1,0 +1,10 @@
+mpdris2 (0.9.2) unstable; urgency=medium
+
+  * New upstream release based on b0bbywan/mpDris2 fork
+  * Cover art improvements: fetch from MPD via readpicture/albumart commands
+  * CUE/cdda cover art fallback via MPD database search
+  * Add ConditionUser guards to systemd unit (folded in)
+  * Initial Debian packaging for the b0bbywan APT repository,
+    based on Simon McVittie's official Debian packaging
+
+ -- Mathieu Réquillart <mathieu.requillart@gmail.com>  Sun, 26 Apr 2026 12:00:00 +0000

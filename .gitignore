@@ -17,3 +17,20 @@ stamp-it
 mpDris2
 mpDris2.py
 mpDris2.service
+
+# debhelper / dpkg-buildpackage artifacts
+debian/.debhelper/
+debian/autoreconf.after
+debian/autoreconf.before
+debian/debhelper-build-stamp
+debian/files
+debian/mpDris2.1
+debian/mpdris2/
+debian/mpdris2.debhelper.log
+debian/mpdris2.postinst.debhelper
+debian/mpdris2.postrm.debhelper
+debian/mpdris2.substvars
+debian/tmp/
+*.deb
+*.buildinfo
+*.changes
