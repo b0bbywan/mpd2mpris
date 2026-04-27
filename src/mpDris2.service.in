@@ -6,7 +6,8 @@ ConditionUser=!root
 ConditionUser=!@system
 
 [Service]
-Restart=on-failure
+Restart=always
+RestartSec=5
 ExecStart=@bindir@/mpDris2 --use-journal --no-reconnect
 BusName=org.mpris.MediaPlayer2.mpd
 
