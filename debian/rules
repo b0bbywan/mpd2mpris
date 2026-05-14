@@ -1,31 +1,23 @@
 #!/usr/bin/make -f
-
-# must be before including anything
-debian_dir := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-
-include /usr/share/dpkg/default.mk
+export PYBUILD_NAME=mpdris2
 
 %:
-	dh $@ --with python3
+	dh $@ --with python3 --buildsystem=pybuild
 
-override_dh_autoreconf:
-	NOCONFIGURE=1 dh_autoreconf ./autogen.sh --
-
-override_dh_auto_configure:
-	dh_auto_configure \
-		PYTHON=/usr/bin/python3 \
-		$(NULL)
-
+# Compile gettext catalogs into mpdris2/locale/ so setuptools picks
+# them up via package_data. Babel ships .py extractors only, so we
+# use plain msgfmt here.
 override_dh_auto_build:
+	@for po in po/*.po; do \
+		lang=$$(basename $$po .po); \
+		mkdir -p mpdris2/locale/$$lang/LC_MESSAGES; \
+		msgfmt $$po -o mpdris2/locale/$$lang/LC_MESSAGES/mpdris2.mo; \
+	done
 	dh_auto_build
-	sed -e 's!@docdir@!/usr/share/doc/mpdris2!' \
-		< debian/mpDris2.1.in \
-		> debian/mpDris2.1
 
-override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp
-	sed -i -e '1s,.*,#!/usr/bin/python3,' debian/tmp/usr/bin/mpDris2
+# Tests run in the CI lint job (pytest + dbus_fast in a venv); the deb
+# build env has neither, and shipping pytest into it for this is silly.
+override_dh_auto_test:
 
-override_dh_install:
-	rm -f debian/tmp/usr/share/doc/mpdris2/COPYING
-	dh_install
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
