@@ -2,38 +2,48 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2015-08-08 11:34+0200\n"
+"Report-Msgid-Bugs-To: https://github.com/b0bbywan/mpDris2/issues\n"
+"POT-Creation-Date: 2026-05-16 19:41+0200\n"
 "PO-Revision-Date: 2012-02-05 12:20+0100\n"
 "Last-Translator: Jean-Philippe Braun <eon@patapon.info>\n"
 "Language-Team: Jean-Philippe Braun <eon@patapon.info>\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=utf-8\n"
+"Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: ../src/mpDris2.py:299
-msgid "Reconnected"
-msgstr "Reconnecté"
+#: mpdris2/bridge.py:283 mpdris2/notify.py:77
+msgid "Unknown title"
+msgstr "Titre inconnu"
 
-#: ../src/mpDris2.py:353
-msgid "Disconnected"
-msgstr "Déconnecté"
+#: mpdris2/bridge.py:289 mpdris2/bridge.py:290 mpdris2/notify.py:84
+msgid "Unknown artist"
+msgstr "Artiste inconnu"
 
-#: ../src/mpDris2.py:456 ../src/mpDris2.py:1019 ../src/mpDris2.py:1027
-msgid "Paused"
-msgstr "En pause"
-
-#: ../src/mpDris2.py:459 ../src/mpDris2.py:1030 ../src/mpDris2.py:1042
-msgid "Playing"
-msgstr "En cours"
-
-#: ../src/mpDris2.py:466 ../src/mpDris2.py:1036
-msgid "Stopped"
-msgstr "Stoppé"
-
-#. FIXME: maybe this could be done in a nicer way?
-#: ../src/mpDris2.py:669
+#: mpdris2/bridge.py:290
 #, python-format
 msgid "by %s"
 msgstr "par %s"
+
+#: mpdris2/bridge.py:292
+msgid "Paused"
+msgstr "En pause"
+
+#: mpdris2/bridge.py:563
+msgid "Stopped"
+msgstr "Stoppé"
+
+#: mpdris2/bridge.py:621
+msgid "Reconnected"
+msgstr "Reconnecté"
+
+#: mpdris2/bridge.py:665
+msgid "Disconnected"
+msgstr "Déconnecté"
+
+#: mpdris2/notify.py:76
+msgid "Unknown album"
+msgstr "Album inconnu"
+
+#~ msgid "Playing"
+#~ msgstr "En cours"
