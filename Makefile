@@ -66,7 +66,12 @@ clean:
 
 # Refresh the .pot template from current source.
 i18n-extract:
-	pybabel extract -F babel.cfg -o po/mpdris2.pot mpdris2/
+	pybabel extract -F babel.cfg \
+		--project=mpDris2 \
+		--version="$$($(VERSION))" \
+		--copyright-holder="Mathieu Réquillart" \
+		--msgid-bugs-address=https://github.com/b0bbywan/mpDris2/issues \
+		-o po/mpdris2.pot mpdris2/
 
 # Compile .po files into the package's runtime locale tree.
 i18n-compile:
