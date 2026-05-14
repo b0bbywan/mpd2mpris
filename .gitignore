@@ -1,6 +1,9 @@
-Makefile
+# Autotools (legacy — removed by PR 4 in the asyncio refactor; kept here
+# transitionally so an accidental `./autogen.sh` doesn't dirty the tree).
 Makefile.in
 Makefile.in.in
+po/Makefile
+src/Makefile
 compile
 config.*
 configure
@@ -17,6 +20,18 @@ stamp-it
 mpDris2
 mpDris2.py
 mpDris2.service
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+mpdris2/locale/
 
 # debhelper / dpkg-buildpackage artifacts
 debian/.debhelper/
