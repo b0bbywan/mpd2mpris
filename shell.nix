@@ -3,6 +3,16 @@ let
 in
   pkgs.mkShell {
     buildInputs = with pkgs; [
-      (python3.withPackages (ps: with ps; [mpd2 dbus-python pygobject3 mutagen]))
+      gettext
+      (python311.withPackages (ps: with ps; [
+        mpd2
+        dbus-fast
+        babel
+        pytest
+        pytest-asyncio
+        mypy
+        ruff
+        build
+      ]))
     ];
   }

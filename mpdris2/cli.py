@@ -10,12 +10,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import configparser
+import gettext
 import logging
 import os
 import signal
 import sys
 
 logger = logging.getLogger("mpdris2")
+
+# Bind the message catalog so ``from gettext import gettext as _``
+# lookups in bridge.py / notify.py hit our installed .mo files.
+# Catalogs ship as package data under
+# ``mpdris2/locale/<lang>/LC_MESSAGES/mpdris2.mo``.
+_LOCALE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "locale")
+gettext.bindtextdomain("mpdris2", _LOCALE_DIR)
+gettext.textdomain("mpdris2")
 
 CONFIG_PATHS = [
     os.path.join(

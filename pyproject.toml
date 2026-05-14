@@ -66,8 +66,8 @@ warn_redundant_casts = true
 warn_return_any = true
 no_implicit_optional = true
 disallow_untyped_defs = true
-# Third-party libs (dbus_fast, mpd, mutagen, musicbrainzngs) don't ship
-# type stubs; treat their imports as Any rather than failing outright.
+# Third-party libs (dbus_fast, mpd) don't ship type stubs; treat their
+# imports as Any rather than failing outright.
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

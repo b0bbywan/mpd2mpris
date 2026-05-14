@@ -2,119 +2,93 @@ name: Build
 
 on:
   push:
-    branches: [master]
     tags: ['v*']
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          fetch-depth: 0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y autoconf automake intltool python3
-
-      - name: Autogen
-        run: ./autogen.sh --sysconfdir=/etc
-
-      - name: Build
-        run: make
-
-      - name: Prepare release assets
-        run: |
-          mkdir -p release
-          cp src/mpDris2 release/
-          cp src/mpDris2.service release/
-          cp src/org.mpris.MediaPlayer2.mpd.service release/
-          cp src/mpDris2.conf release/
-          cp src/mpdris2.desktop release/
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: mpDris2
-          path: release/
+          python-version: '3.11'
+      - name: Install runtime + dev deps
+        run: pip install -e .[dev,cover]
+      # Fail fast on a tag that doesn't match mpdris2/__init__.py,
+      # before the deb job (and the rest of the matrix) burns minutes.
+      - name: Check tag matches __init__.py
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: make check-tag
+      - name: ruff
+        if: always()
+        run: make lint-ruff
+      - name: mypy
+        if: always()
+        run: make lint-mypy
+      - name: Pytest
+        if: always()
+        run: make test
 
   deb:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Build inside the same Debian release we target (trixie) so dh-python,
+    # debhelper and python3-* versions match what users actually have.
+    container:
+      image: debian:trixie
     steps:
-      - uses: actions/checkout@v5
+      - name: Install build deps
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git make gettext \
+            build-essential debhelper dh-python pybuild-plugin-pyproject \
+            python3 python3-setuptools python3-babel devscripts
+
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Install Debian build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential debhelper dh-python \
-            autoconf automake gettext intltool \
-            python3 devscripts
-
-      - name: Sync changelog with tag version
+      - name: Sync changelog from __init__.py
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           DEBFULLNAME: GitHub Actions
           DEBEMAIL: actions@github.com
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CL_VERSION="$(dpkg-parsechangelog -S Version)"
-          if [ "${TAG_VERSION}" != "${CL_VERSION}" ]; then
-            echo "Tag ${TAG_VERSION} differs from changelog ${CL_VERSION} — prepending entry"
-            dch --newversion "${TAG_VERSION}" --distribution unstable --urgency medium \
-              "Release ${TAG_VERSION}"
-          else
-            echo "Tag matches changelog (${CL_VERSION})"
-          fi
+        run: make sync-deb
 
       - name: Build .deb
-        run: dpkg-buildpackage -b -us -uc
+        run: make deb
 
       - name: Collect .deb
         run: |
-          mkdir -p deb
-          mv ../*.deb deb/
-          ls -lh deb/
+          mkdir -p dist
+          mv ../mpdris2_*.deb dist/
+          ls -lh dist/
 
-      - name: Upload .deb artifact
-        uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v6
         with:
           name: mpdris2-deb
-          path: deb/*.deb
+          path: dist/*.deb
+          if-no-files-found: error
 
   release:
-    needs: [build, deb]
+    needs: [lint, deb]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download tarball assets
-        uses: actions/download-artifact@v6
-        with:
-          name: mpDris2
-          path: release
-
-      - name: Download .deb
-        uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v6
         with:
           name: mpdris2-deb
-          path: deb
-
-      - name: Create release archive
-        run: tar czf mpDris2-${GITHUB_REF_NAME#v}.tar.gz -C release .
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+          path: dist/
+      - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            mpDris2-*.tar.gz
-            deb/*.deb
+          files: dist/*.deb
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
 
@@ -123,8 +97,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger apt-repo rebuild
-        uses: peter-evans/repository-dispatch@v3
+      - uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.APT_REPO_TOKEN }}
           repository: b0bbywan/odio-apt-repo
