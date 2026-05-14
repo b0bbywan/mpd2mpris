@@ -1,0 +1,70 @@
+.TH MPDRIS2 1 "May 2026" "" "D-Bus services"
+.\" Copyright © 2012-2016 Simon McVittie
+.\" Copyright © 2026 Mathieu Réquillart (asyncio / dbus-fast rewrite)
+.\" It may be distributed under the same terms as mpDris2 itself.
+.SH NAME
+mpDris2 \- media player interface (MPRIS2) bridge for MPD
+.SH SYNOPSIS
+.BR mpDris2
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B mpDris2
+is an implementation of the MPRIS2 media player interface as a
+client for MPD, allowing MPRIS2 clients to control MPD and observe its
+track changes via a standard D-Bus interface. The daemon runs entirely
+on asyncio (python-mpd2 + dbus-fast); track-change notifications are
+sent via libnotify when a notification daemon is available.
+.PP
+It is normally run automatically via D-Bus service activation, or as a
+systemd user unit. On systems following the freedesktop.org Desktop
+Application Autostart Specification it will be run on login.
+.SH CONFIGURATION
+\fBmpDris2\fR is normally configured via the file
+\fIXDG_CONFIG_HOME\fB/mpDris2/mpDris2.conf\fR (typically
+\fB~/.config/mpDris2/mpDris2.conf\fR), with
+\fI/etc/mpDris2/mpDris2.conf\fR as a system-wide fallback. An example
+configuration ships at \fB/usr/share/doc/mpdris2/mpdris2.conf\fR.
+Settings in the configuration file can be overridden by command-line
+options and environment variables.
+.SH OPTIONS
+.TP
+\fB-h\fR, \fB--help\fR
+Show a help message and exit.
+.TP
+\fB-v\fR, \fB--verbose\fR
+Enable debug logging.
+.TP
+\fB--use-journal\fR
+Log without timestamps (suitable for systemd-journald, which adds them).
+.TP
+\fB--no-reconnect\fR
+Exit on MPD disconnect instead of retrying with backoff.
+.TP
+\fB--config=\fIPATH\fR
+Read an alternative configuration file.
+.TP
+\fB-H\fR \fIHOST\fR, \fB--host=\fIHOST\fR
+MPD host, overriding the configuration file.
+.TP
+\fB-p\fR \fIPORT\fR, \fB--port=\fIPORT\fR
+MPD port, overriding the configuration file.
+.TP
+\fB--music-dir=\fIPATH\fR
+Music library path, overriding the configuration file.
+.SH ENVIRONMENT
+.TP
+\fBXDG_CONFIG_HOME\fR=\fIDIRECTORY\fR
+Used to find the configuration file according to the XDG Base
+Directory Specification.
+.TP
+\fBMPD_HOST\fR=\fIHOSTNAME\fR
+Set the hostname of the MPD server, overriding the configuration file.
+.TP
+\fBMPD_PORT\fR=\fIPORT\fR
+Set the port number of the MPD server, overriding the configuration file.
+.TP
+\fBXDG_MUSIC_DIR\fR=\fIDIRECTORY\fR
+Used to find the default music directory if not specified in the
+configuration file or as a command-line option.
+.SH SEE ALSO
+.BR mpd (1)
