@@ -21,7 +21,6 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-cover = ["mutagen>=1.45"]
 dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "babel", "build"]
 
 [project.scripts]
