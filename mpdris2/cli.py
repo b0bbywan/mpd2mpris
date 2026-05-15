@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import configparser
-import contextlib
 import logging
 import os
+import signal
 import sys
 
 logger = logging.getLogger("mpdris2")
@@ -90,10 +90,29 @@ def main() -> None:
 
     # Imported lazily so test_cli.py can exercise main() without dragging
     # in dbus-fast / python-mpd2 at import time.
-    from mpdris2.daemon import run
+    from mpdris2.bridge import MpdMprisBridge
 
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(run(cfg, args))
+    async def _amain() -> None:
+        # SIGTERM / SIGINT cancel the daemon task; CancelledError
+        # propagates through all the awaits (notably ``client.idle()``)
+        # so cleanup runs immediately instead of waiting for the next
+        # MPD event.
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        assert task is not None
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
+        loop.add_signal_handler(signal.SIGINT, task.cancel)
+
+        bridge = MpdMprisBridge(cfg, args)
+        await bridge.setup()
+        try:
+            await bridge.run_loop()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await bridge.close()
+
+    asyncio.run(_amain())
 
 
 if __name__ == "__main__":
