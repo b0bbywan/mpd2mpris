@@ -22,6 +22,7 @@ import os
 import re
 import shlex
 from collections.abc import Awaitable, Callable, Coroutine
+from gettext import gettext as _
 from pathlib import Path
 from typing import Any
 
@@ -279,16 +280,16 @@ def _build_track_notification(
         title = format_template(summary_tpl, meta, position_us=position_us)
     else:
         title_v = meta.get("xesam:title")
-        title = str(getattr(title_v, "value", title_v) if title_v else "Unknown title")
+        title = str(getattr(title_v, "value", title_v) if title_v else _("Unknown title"))
 
     if body_tpl:
         body = format_template(body_tpl, meta, position_us=position_us)
     else:
         artists_v = meta.get("xesam:artist")
-        artists = getattr(artists_v, "value", artists_v) if artists_v else ["Unknown artist"]
-        body = f"by {', '.join(artists or ['Unknown artist'])}"
+        artists = getattr(artists_v, "value", artists_v) if artists_v else [_("Unknown artist")]
+        body = _("by %s") % ", ".join(artists or [_("Unknown artist")])
         if paused:
-            body += " (Paused)"
+            body += f" ({_('Paused')})"
 
     icon = PAUSED_ICON if paused else _icon_path_for(meta)
     return title, body, icon
@@ -559,7 +560,7 @@ class MpdMprisBridge:
                 and old_status.get("state") in ("play", "pause")
                 and state == "stop"):
             self._schedule(self.notifier.notify(
-                IDENTITY, "Stopped", "media-playback-stop-symbolic",
+                IDENTITY, _("Stopped"), "media-playback-stop-symbolic",
             ))
 
         # Track-change notification — always when playing; also while
@@ -617,7 +618,7 @@ class MpdMprisBridge:
                 self.client = None
                 continue
             if self._was_connected and self.notifier:
-                self._schedule(self.notifier.notify(IDENTITY, "Reconnected", ""))
+                self._schedule(self.notifier.notify(IDENTITY, _("Reconnected"), ""))
             self._was_connected = True
             self.caps = mpd_client.capabilities(cmds)
             logger.info("MPD capabilities: %s",
@@ -661,7 +662,7 @@ class MpdMprisBridge:
                 # the bus is still healthy.
                 if self.notifier:
                     self._schedule(self.notifier.notify(
-                        IDENTITY, "Disconnected", "error",
+                        IDENTITY, _("Disconnected"), "error",
                     ))
             finally:
                 with contextlib.suppress(Exception):
