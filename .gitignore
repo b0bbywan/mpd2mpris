@@ -49,3 +49,8 @@ debian/tmp/
 *.deb
 *.buildinfo
 *.changes
+
+# Python virtualenv (local dev)
+.venv/
+__pycache__/
+*.pyc
