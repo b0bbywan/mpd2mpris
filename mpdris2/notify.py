@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from gettext import gettext as _
 from typing import Any
 
 from dbus_fast import Message, MessageType, Variant
@@ -72,15 +73,15 @@ def format_template(
     genre = _variant_value(meta.get("xesam:genre", [])) or []
 
     values: dict[str, str] = {
-        "album": str(_variant_value(meta.get("xesam:album", "Unknown Album"))),
-        "title": str(_variant_value(meta.get("xesam:title", "Unknown Title"))),
+        "album": str(_variant_value(meta.get("xesam:album", _("Unknown album")))),
+        "title": str(_variant_value(meta.get("xesam:title", _("Unknown title")))),
         "id": trackid.split("/")[-1],
         "time": _format_duration(int(length_us) / 1_000_000),
         "timeposition": _format_duration(position_us / 1_000_000),
         "date": str(_variant_value(meta.get("xesam:contentCreated", ""))),
         "track": str(_variant_value(meta.get("xesam:trackNumber", ""))),
         "disc": str(_variant_value(meta.get("xesam:discNumber", ""))),
-        "artist": ", ".join(str(a) for a in artist) or "Unknown Artist",
+        "artist": ", ".join(str(a) for a in artist) or _("Unknown artist"),
         "albumartist": ", ".join(str(a) for a in albumartist),
         "composer": str(_variant_value(meta.get("xesam:composer", ""))),
         "genre": ", ".join(str(g) for g in genre),

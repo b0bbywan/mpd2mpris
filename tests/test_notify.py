@@ -47,7 +47,7 @@ def test_format_template_unknown_placeholder_kept() -> None:
 
 def test_format_template_missing_fields_use_defaults() -> None:
     out = format_template("%album%/%artist%/%title%", {})
-    assert out == "Unknown Album/Unknown Artist/Unknown Title"
+    assert out == "Unknown album/Unknown artist/Unknown title"
 
 
 def test_format_template_position() -> None:
