@@ -15,8 +15,9 @@ override_dh_auto_build:
 	done
 	dh_auto_build
 
-override_dh_installsystemd:
-	dh_installsystemd --no-enable --no-start
+# Tests run in the CI lint job (pytest + dbus_fast in a venv); the deb
+# build env has neither, and shipping pytest into it for this is silly.
+override_dh_auto_test:
 
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable
