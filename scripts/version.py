@@ -36,15 +36,28 @@ def to_debian(v: str) -> str:
     return v
 
 
+TAG_RE = re.compile(r"^v?(\d+\.\d+\.\d+)(?:-(rc|beta|alpha)\.(\d+))?$")
+
+
 def normalize_tag(tag: str) -> str:
-    """Strip the leading ``v`` and convert Debian-ish prerelease forms back
-    to PEP 440 so the result is comparable with ``__init__.py``.
+    """Validate the canonical tag form and return the matching PEP 440 version.
+
+    Canonical form: ``vX.Y.Z`` or ``vX.Y.Z-{rc,beta,alpha}.N`` (leading ``v``
+    optional). The ``-rc.N`` shape is required so apt sorts prereleases below
+    finals and so ``contains(github.ref_name, '-rc')`` in the release job
+    still picks them up as prereleases.
     """
-    tag = tag.removeprefix("v")
-    tag = re.sub(r"-rc\.?(\d+)$", r"rc\1", tag)
-    tag = re.sub(r"-beta\.?(\d+)$", r"b\1", tag)
-    tag = re.sub(r"-alpha\.?(\d+)$", r"a\1", tag)
-    return tag
+    m = TAG_RE.match(tag)
+    if not m:
+        sys.exit(
+            f"tag {tag!r} doesn't match the canonical form "
+            "vX.Y.Z or vX.Y.Z-{rc,beta,alpha}.N"
+        )
+    base, kind, n = m.group(1), m.group(2), m.group(3)
+    if kind is None:
+        return base
+    suffix = {"rc": "rc", "beta": "b", "alpha": "a"}[kind]
+    return f"{base}{suffix}{n}"
 
 
 def main() -> None:
