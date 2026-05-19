@@ -1,30 +1,19 @@
-Makefile
-Makefile.in
-Makefile.in.in
-compile
-config.*
-configure
-depcomp
-install-sh
-missing
-aclocal.m4
-autom4te.cache
-org.mpris.MediaPlayer2.mpd.service
-POTFILES
-*.gmo
-*.pot
-stamp-it
-mpDris2
-mpDris2.py
-mpDris2.service
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+mpdris2/locale/
 
 # debhelper / dpkg-buildpackage artifacts
 debian/.debhelper/
-debian/autoreconf.after
-debian/autoreconf.before
 debian/debhelper-build-stamp
 debian/files
-debian/mpDris2.1
 debian/mpdris2/
 debian/mpdris2.debhelper.log
 debian/mpdris2.postinst.debhelper
@@ -34,3 +23,8 @@ debian/tmp/
 *.deb
 *.buildinfo
 *.changes
+
+# Python virtualenv (local dev)
+.venv/
+__pycache__/
+*.pyc

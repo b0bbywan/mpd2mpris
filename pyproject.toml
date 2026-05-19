@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpdris2"
+description = "MPRIS2 D-Bus bridge for MPD"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+authors = [{name = "Mathieu Réquillart", email = "mathieu.requillart@gmail.com"}]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = [
+    # <3.2: mpd_client.fetch_config leans on private attrs.
+    "python-mpd2>=3.1,<3.2",
+    "dbus-fast>=2.0",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "babel", "build"]
+
+[project.scripts]
+mpDris2 = "mpdris2.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/b0bbywan/mpDris2"
+
+[tool.setuptools.dynamic]
+version = {attr = "mpdris2.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["mpdris2*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+mpdris2 = ["locale/*/LC_MESSAGES/*.mo"]
+
+[tool.pytest.ini_options]
+# Add the repo root so `pytest -q` (not via `python -m pytest`) can
+# still import the mpdris2 package without an editable install.
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pyflakes (F) for real bugs, pycodestyle (E, W) for style, isort (I) for
+# imports, bugbear (B) for common pitfalls, pyupgrade (UP) for modern
+# Python idioms, and simplify (SIM) for redundant constructs.
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# The dbus-fast service interface declares D-Bus type signatures as Python
+# annotations ("s", "b", "a{sv}", ...). Ruff parses these as forward
+# references and complains; silence F821/F722 for that file only.
+"mpdris2/mpris.py" = ["F821", "F722", "UP037"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true
+disallow_untyped_defs = true
+# Third-party libs (dbus_fast, mpd) don't ship type stubs; treat their
+# imports as Any rather than failing outright.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Same dbus-fast signature-as-annotation issue as with ruff: those "s",
+# "b", "a{sv}" strings aren't Python types. Skip mpris.py.
+module = "mpdris2.mpris"
+ignore_errors = true
