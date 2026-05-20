@@ -14,8 +14,10 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
 ]
 dependencies = [
-    # <3.2: mpd_client.fetch_config leans on private attrs.
-    "python-mpd2>=3.1,<3.2",
+    # fetch_config uses the public client.config() and only falls back to
+    # private attrs when an older lib mis-parses it (e.g. Debian stable's
+    # 3.1.1); the public path keeps newer majors working, so no cap.
+    "python-mpd2>=3.1",
     "dbus-fast>=2.0",
 ]
 dynamic = ["version"]

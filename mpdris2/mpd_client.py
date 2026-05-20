@@ -75,16 +75,29 @@ async def connect(
 async def fetch_config(client: MPDClient) -> dict[str, str]:
     """Send MPD's ``config`` command and parse the response as a dict.
 
-    Works around python-mpd2 3.1.x mapping ``config`` to
-    ``_parse_item`` (which only handles single-pair responses);
-    ``config`` actually returns multiple pairs (``music_directory``,
-    ``playlist_directory``, ``pcre``), so the upstream parser returns
-    ``None`` and we never see the data.
+    ``config`` returns multiple pairs (``music_directory``,
+    ``playlist_directory``, ``pcre``). python-mpd2 >= 3.1.2 parses this
+    correctly, so ``client.config()`` returns the dict directly. Older
+    releases (e.g. 3.1.1 from Debian stable) map ``config`` to
+    ``_parse_item``, which only handles single-pair responses and returns
+    ``None``; we detect that and re-issue the command through
+    python-mpd2's internal queue with a correct dict-parsing callback.
 
-    We reuse python-mpd2's internal command queue + writer with a
-    correct dict-parsing callback. Only allowed on local socket
-    connections (MPD answers "Access denied" on TCP).
+    Only allowed on local socket connections (MPD answers
+    "Access denied" on TCP).
     """
+    try:
+        async with asyncio.timeout(CONFIG_PROBE_TIMEOUT):
+            raw = await client.config()
+    except (TimeoutError, mpd.ConnectionError, OSError) as e:
+        logger.debug("config probe gave up: %s", e)
+        return {}
+    if raw:
+        return dict(raw)
+
+    # python-mpd2 < 3.1.2 mis-parsed the multi-pair response as a single
+    # item and gave us ``None``; re-issue ``config`` with a parser that
+    # keeps every pair.
     def _parse_as_dict(client_: MPDClient, lines: list) -> dict[str, str]:
         return dict(client_._parse_pairs(lines))
 
