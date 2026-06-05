@@ -256,48 +256,143 @@ async def test_scan_song_dir_swallows_oserror(
     assert await cf._scan_song_dir(tmp_path) is None
 
 
-# --- _lookup_downloads_cache ---------------------------------------------
+# --- _cache_path ----------------------------------------------------------
 
-def test_lookup_downloads_cache_hit(tmp_path: Path) -> None:
-    (tmp_path / "Artist-Album.jpg").touch()
+def test_cache_path_builds_name(tmp_path: Path) -> None:
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache({"artist": "Artist", "album": "Album"})
-    assert result == (tmp_path / "Artist-Album.jpg").as_uri()
+    assert cf._cache_path("Artist", "Album") == tmp_path / "Artist-Album.jpg"
 
 
-def test_lookup_downloads_cache_miss(tmp_path: Path) -> None:
+def test_cache_path_missing_artist(tmp_path: Path) -> None:
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache({"artist": "Artist", "album": "Album"})
-    assert result is None
+    assert cf._cache_path("", "Album") is None
 
 
-def test_lookup_downloads_cache_missing_artist(tmp_path: Path) -> None:
+def test_cache_path_missing_album(tmp_path: Path) -> None:
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    assert cf._lookup_downloads_cache({"album": "Album"}) is None
+    assert cf._cache_path("Artist", "") is None
 
 
-def test_lookup_downloads_cache_missing_album(tmp_path: Path) -> None:
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    assert cf._lookup_downloads_cache({"artist": "Artist"}) is None
-
-
-def test_lookup_downloads_cache_sanitizes_slash(tmp_path: Path) -> None:
+def test_cache_path_sanitizes_slash(tmp_path: Path) -> None:
     # "AC/DC" must not escape the cache dir into ``tmp_path/AC/DC-...``.
-    (tmp_path / "AC_DC-Back in Black.jpg").touch()
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache(
-        {"artist": "AC/DC", "album": "Back in Black"},
-    )
-    assert result == (tmp_path / "AC_DC-Back in Black.jpg").as_uri()
+    result = cf._cache_path("AC/DC", "Back in Black")
+    assert result == (tmp_path / "AC_DC-Back in Black.jpg")
 
 
-def test_lookup_downloads_cache_list_artist_uses_first(tmp_path: Path) -> None:
-    (tmp_path / "A-B.jpg").touch()
+# --- _resolve_key + _download_cover (delegate to mpdris2.musicbrainz) -----
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"imagedata"
+
+
+def _async_return(value: object):
+    async def _fn(*_a: object, **_k: object) -> object:
+        return value
+    return _fn
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_uses_tags_without_calling_mb(tmp_path: Path, monkeypatch) -> None:
+    calls: list = []
+
+    async def _resolve(title: str) -> tuple[str, str]:
+        calls.append(title)
+        return ("X", "Y")
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _resolve)
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache(
-        {"artist": ["A", "X", "Y"], "album": "B"}
-    )
-    assert result == (tmp_path / "A-B.jpg").as_uri()
+    assert await cf._resolve_key({"artist": "A", "album": "B", "title": "T"}) == ("A", "B")
+    assert calls == []  # tags win, MB untouched
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_recovers_from_title(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _async_return(("Mato", "Summer Dub")))
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    assert await cf._resolve_key({"title": "Mato - 1980 Dub"}) == ("Mato", "Summer Dub")
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_empty_when_unresolved(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _async_return(None))
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    assert await cf._resolve_key({"title": "obscure jingle"}) == ("", "")
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_memoises_title(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _resolve(title: str) -> tuple[str, str]:
+        calls.append(title)
+        return ("Mato", "Summer Dub")
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _resolve)
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    meta = {"title": "Mato - 1980 Dub"}
+    assert await cf._resolve_key(meta) == ("Mato", "Summer Dub")
+    assert await cf._resolve_key(meta) == ("Mato", "Summer Dub")
+    assert calls == ["Mato - 1980 Dub"]  # second lookup served from memo
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_memoises_negative(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _resolve(title: str) -> None:
+        calls.append(title)
+        return None
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _resolve)
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    meta = {"title": "-- AUTOPROMO - Twittos"}
+    assert await cf._resolve_key(meta) == ("", "")
+    assert await cf._resolve_key(meta) == ("", "")
+    assert calls == ["-- AUTOPROMO - Twittos"]  # negative result memoised too
+
+
+def _patch_sources(monkeypatch, mb=None, it=None, dz=None) -> None:
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.fetch_cover", _async_return(mb))
+    monkeypatch.setattr("mpdris2.cover.itunes.fetch_cover", _async_return(it))
+    monkeypatch.setattr("mpdris2.cover.deezer.fetch_cover", _async_return(dz))
+
+
+@pytest.mark.asyncio
+async def test_download_cover_caches_bytes(tmp_path: Path, monkeypatch) -> None:
+    _patch_sources(monkeypatch, mb=_PNG)
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    cached = tmp_path / "A-B.jpg"
+    uri = await cf._download_cover("A", "B", cached)
+    assert uri == cached.as_uri()
+    assert cached.read_bytes() == _PNG
+
+
+@pytest.mark.asyncio
+async def test_download_cover_falls_back_to_next_source(tmp_path: Path, monkeypatch) -> None:
+    # MusicBrainz has nothing; iTunes provides the cover.
+    _patch_sources(monkeypatch, mb=None, it=_PNG)
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    cached = tmp_path / "A-B.jpg"
+    assert await cf._download_cover("A", "B", cached) == cached.as_uri()
+    assert cached.read_bytes() == _PNG
+
+
+@pytest.mark.asyncio
+async def test_download_cover_none_when_no_source_has_it(tmp_path: Path, monkeypatch) -> None:
+    _patch_sources(monkeypatch)  # all None
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    cached = tmp_path / "A-B.jpg"
+    assert await cf._download_cover("A", "B", cached) is None
+    assert not cached.exists()
+
+
+@pytest.mark.asyncio
+async def test_download_cover_rejects_unknown_mime(tmp_path: Path, monkeypatch) -> None:
+    _patch_sources(monkeypatch, mb=b"not an image")
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    cached = tmp_path / "A-B.jpg"
+    assert await cf._download_cover("A", "B", cached) is None
+    assert not cached.exists()
 
 
 # --- _materialise + temp reuse via find() --------------------------------
