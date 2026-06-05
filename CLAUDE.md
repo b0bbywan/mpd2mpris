@@ -41,9 +41,10 @@ Flat package at `mpdris2/`:
 | `mpd_client.py` | `mpd.asyncio.MPDClient` wrapper: connect-with-backoff + capability probe |
 | `mpris.py` | `dbus_fast.ServiceInterface` classes: `MediaPlayer2` (root) + `MediaPlayer2Player` |
 | `translate.py` | Pure MPD song dict → MPRIS Metadata dict (`Variant`-wrapped) |
-| `cover.py` | 6-step async cover pipeline (MPD readpicture → filesystem regex → MPD albumart → CUE/cdda fallback → XDG cache → MusicBrainz/Cover Art Archive). Step 6 delegates to `musicbrainz.py` and caches its download into the step-5 dir. For web radio (title only, no album tag) the artist+album are recovered from MusicBrainz first so the cache keys on them. |
+| `cover.py` | 7-step async cover pipeline (MPD readpicture → filesystem regex → MPD albumart → CUE/cdda fallback → XDG cache → MusicBrainz/iTunes/Deezer → web-radio station favicon). Step 6 delegates to `musicbrainz.py`/`itunes.py`/`deezer.py` and caches its download into the step-5 dir; for web radio (title only) the artist+album are recovered from MusicBrainz first so the cache keys on them. Step 7 falls back to the station favicon URL (`radiobrowser.py`) for http(s):// streams. |
 | `musicbrainz.py` | Optional MusicBrainz / Cover Art Archive lookups (isolates the `musicbrainzngs` dep): `resolve_album(title)` (fielded recording search + artist/title validation, for web radio) and `fetch_cover(artist, album)` (release-group cover). No-op when the dep is absent. |
 | `itunes.py` / `deezer.py` | No-auth, stdlib-only cover-art fallbacks (`fetch_cover(artist, album)`) tried after MusicBrainz/CAA when it has no image — CAA coverage is sparse for some content. |
+| `radiobrowser.py` | No-auth, stdlib-only last-resort for http(s):// web-radio streams: `station_icon(stream_url)` returns the station's favicon **URL** (cover.py step 7). Returned verbatim as `mpris:artUrl` — no download. |
 | `notify.py` | Desktop notifications via `org.freedesktop.Notifications` over dbus-fast |
 | `locale/` | Compiled `.mo` files (built from `po/*.po`, shipped as package data) |
 
