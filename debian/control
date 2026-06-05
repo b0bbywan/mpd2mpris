@@ -25,6 +25,8 @@ Depends:
  python3-dbus-fast,
  ${misc:Depends},
  ${python3:Depends},
+Recommends:
+ python3-musicbrainzngs,
 Suggests:
  mpd,
  python3-systemd,
