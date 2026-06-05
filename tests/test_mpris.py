@@ -35,9 +35,31 @@ def test_player_defaults() -> None:
     assert p.Shuffle is False
     assert p.Metadata == {}
     assert p.Volume == 0.0
-    assert p.Position == 0
     assert p.CanControl is True
     assert p.CanSeek is False
+
+
+@pytest.mark.asyncio
+async def test_position_defaults_to_cache_without_callback() -> None:
+    p = MediaPlayer2Player()
+    assert await p.Position == 0
+
+
+@pytest.mark.asyncio
+async def test_position_queries_backend_live() -> None:
+    p = MediaPlayer2Player(on_get_position=lambda: _aval(7_500_000))
+    assert await p.Position == 7_500_000
+
+
+@pytest.mark.asyncio
+async def test_position_falls_back_to_cache_when_backend_none() -> None:
+    p = MediaPlayer2Player(on_get_position=lambda: _aval(None))
+    p.update_position(3_000_000)
+    assert await p.Position == 3_000_000
+
+
+async def _aval(v: int | None) -> int | None:
+    return v
 
 
 def test_update_playback_status_valid() -> None:

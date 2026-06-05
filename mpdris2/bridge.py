@@ -183,6 +183,7 @@ class MpdMprisBridge:
             on_volume_set=self.on_volume_set,
             on_loop_status_set=self.on_loop_status_set,
             on_shuffle_set=self.on_shuffle_set,
+            on_get_position=self.on_get_position,
         )
 
     # --- Task / error plumbing ------------------------------------------
@@ -277,6 +278,18 @@ class MpdMprisBridge:
         offset_s = offset_us / 1_000_000
         arg = f"+{offset_s}" if offset_us >= 0 else str(offset_s)
         self._fire(lambda c: c.seekcur(arg))
+
+    async def on_get_position(self) -> int | None:
+        # Live read for the MPRIS Position property: query MPD's current
+        # elapsed time. Returns None when there's no live connection, so the
+        # interface falls back to its last cached value.
+        c = self.client
+        if c is None:
+            return None
+        status = await self._mpd_safe(c.status())
+        if not status:
+            return None
+        return int(parse_elapsed(status) * 1_000_000)
 
     def on_set_position(self, trackid: str, position_us: int) -> None:
         # MPRIS requires the trackid match the currently playing track;

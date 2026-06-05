@@ -18,7 +18,7 @@ This module has no MPD knowledge — see ``mpdris2.bridge`` for the glue.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from dbus_fast.errors import DBusError
 from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, method, signal
@@ -103,6 +103,7 @@ class MediaPlayer2Player(ServiceInterface):
         on_volume_set: Callable[[float], None] | None = None,
         on_loop_status_set: Callable[[str], None] | None = None,
         on_shuffle_set: Callable[[bool], None] | None = None,
+        on_get_position: Callable[[], Awaitable[int | None]] | None = None,
     ) -> None:
         super().__init__(PLAYER_IFACE)
         self._playback_status = "Stopped"
@@ -128,6 +129,7 @@ class MediaPlayer2Player(ServiceInterface):
         self._on_volume_set = on_volume_set
         self._on_loop_status_set = on_loop_status_set
         self._on_shuffle_set = on_shuffle_set
+        self._on_get_position = on_get_position
 
     # --- MPRIS methods ------------------------------------------------
     @method()
@@ -229,7 +231,15 @@ class MediaPlayer2Player(ServiceInterface):
             self._on_volume_set(clamped)
 
     @dbus_property(access=PropertyAccess.READ)
-    def Position(self) -> "x":  # noqa: N802
+    async def Position(self) -> "x":  # noqa: N802
+        # MPD is the source of truth: the cached value only advances on the
+        # idle-driven refresh, so a client polling between events would see
+        # a frozen position. Ask MPD live and fall back to the cache when
+        # there's no live connection.
+        if self._on_get_position is not None:
+            live = await self._on_get_position()
+            if live is not None:
+                self._position = live
         return self._position
 
     @dbus_property(access=PropertyAccess.READ)
