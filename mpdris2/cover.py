@@ -22,9 +22,11 @@ parsing/transferring for that guarantee.
    copy, picks up names like ``folder.jpg``), then falls back to MPD
    ``albumart``.
 5. XDG cover cache (``$XDG_CACHE_HOME/mpDris2/{artist}-{album}.jpg``).
-
-The optional MusicBrainz / Cover Art Archive fallback (PR 5) will slot
-in as a sixth step.
+6. MusicBrainz / Cover Art Archive — last resort network lookup (see
+   ``mpdris2.musicbrainz``, optional dependency). The download is written
+   into the step-5 cache so the next play of the same album resolves
+   locally. For web radio (only a title, no album tag) the artist+album
+   are first recovered from MusicBrainz so this path can key on them.
 
 Requires MPD ≥ 0.22 (for ``readpicture``); the daemon won't error out
 on older servers but covers for non-standardly-named files won't work.
@@ -44,13 +46,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
+from mpdris2 import deezer, itunes, musicbrainz
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
 
-# User-side cover cache. Follows the XDG cache spec; PR 5
-# (MusicBrainz fallback) writes its downloads here and step 4 picks
-# them up on the next track.
+# Cover-byte sources tried in order for a resolved (artist, album), first
+# hit wins: MusicBrainz/CAA (canonical), then the broader-coverage,
+# no-auth fallbacks.
+_COVER_SOURCES = (musicbrainz, itunes, deezer)
+
+# User-side cover cache (XDG). Step 6 writes here; step 5 reads it.
 DEFAULT_COVER_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "mpDris2"
 
 DEFAULT_COVER_REGEX = re.compile(
@@ -159,6 +165,9 @@ class CoverFinder:
         self._can_albumart = config.can_albumart
         self._temp_song_uri: str | None = None
         self._temp_cover: IO[bytes] | None = None
+        # title -> (artist, album) | None, memoised so a web-radio title
+        # resolves to a stable key across refreshes (and isn't re-queried).
+        self._mb_title_cache: dict[str, tuple[str, str] | None] = {}
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -226,11 +235,23 @@ class CoverFinder:
             if cover:
                 return cover
 
-        # 5. Downloaded-covers cache (XDG).
-        cover = self._lookup_downloads_cache(req.mpd_meta)
-        if cover:
-            return cover
+        # Resolve the (artist, album) cache key: straight from the tags, or
+        # — for web radio with only a title — recovered from MusicBrainz.
+        artist, album = await self._resolve_key(req.mpd_meta)
 
+        # 5. Downloaded-covers cache (XDG). A repeat play of the same song
+        #    lands here once step 6 has saved it.
+        cache_path = self._cache_path(artist, album)
+        if cache_path is not None and cache_path.exists():
+            return cache_path.as_uri()
+
+        # 6. MusicBrainz / Cover Art Archive — download + cache.
+        if cache_path is not None:
+            cover = await self._download_cover(artist, album, cache_path)
+            if cover:
+                return cover
+
+        logger.debug("cover: no cover found for %s", req.song_uri)
         return None
 
     # --- step 1 + 3 helpers: MPD protocol ----------------------------
@@ -340,17 +361,58 @@ class CoverFinder:
 
         return await asyncio.to_thread(_scan)
 
-    # --- step 5: downloaded-covers cache ----------------------------
-    def _lookup_downloads_cache(self, mpd_meta: dict) -> str | None:
+    # --- (artist, album) key resolution -----------------------------
+    async def _resolve_key(self, mpd_meta: dict) -> tuple[str, str]:
+        """Return the (artist, album) the cache and cover lookups key on.
+        From the tags when present; otherwise — web radio with only a
+        title — recovered from MusicBrainz, memoised per title. The memo
+        is what makes a repeat play resolve to the same key (so the disk
+        cache hits) instead of re-querying non-deterministically."""
         artist = first(mpd_meta.get("artist"))
         album = first(mpd_meta.get("album"))
-        if not artist or not album:
-            return None
+        if artist and album:
+            return artist, album
+        title = first(mpd_meta.get("title"))
+        if not title:
+            return artist, album
+        if title not in self._mb_title_cache:
+            self._mb_title_cache[title] = await musicbrainz.resolve_album(title)
+        return self._mb_title_cache[title] or (artist, album)
 
+    # --- step 5: downloaded-covers cache ----------------------------
+    def _cache_path(self, artist: str, album: str) -> Path | None:
+        """Cache file for an album, shared by step 5 (read) and step 6
+        (write); ``None`` when artist/album is missing."""
+        if not artist or not album:
+            logger.debug("cover: no cache key (artist=%r album=%r)", artist, album)
+            return None
         # ``/`` would escape ``_cache_dir`` (e.g. "AC/DC").
         safe_name = f"{artist}-{album}.jpg".replace("/", "_")
-        path = self._cache_dir / safe_name
-        return path.as_uri() if path.exists() else None
+        return self._cache_dir / safe_name
+
+    # --- step 6: download a remote cover into the cache -------------
+    async def _download_cover(self, artist: str, album: str, cache_path: Path) -> str | None:
+        for source in _COVER_SOURCES:
+            data = await source.fetch_cover(artist, album)
+            if data:
+                cover = await asyncio.to_thread(self._cache_download, cache_path, data)
+                if cover:
+                    return cover
+        return None
+
+    def _cache_download(self, path: Path, data: bytes) -> str | None:
+        mime = _detect_mime(data)
+        if mime is None:
+            logger.warning("downloaded %d bytes of unrecognised image data; skipping", len(data))
+            return None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        except OSError as e:
+            logger.warning("cover: could not cache download to %s: %s", path, e)
+            return None
+        logger.debug("cover: cached cover at %s", path)
+        return path.as_uri()
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:

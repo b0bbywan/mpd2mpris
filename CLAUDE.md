@@ -41,7 +41,9 @@ Flat package at `mpdris2/`:
 | `mpd_client.py` | `mpd.asyncio.MPDClient` wrapper: connect-with-backoff + capability probe |
 | `mpris.py` | `dbus_fast.ServiceInterface` classes: `MediaPlayer2` (root) + `MediaPlayer2Player` |
 | `translate.py` | Pure MPD song dict → MPRIS Metadata dict (`Variant`-wrapped) |
-| `cover.py` | 5-step async cover pipeline (MPD readpicture → filesystem regex → MPD albumart → CUE/cdda fallback → XDG cache) |
+| `cover.py` | 6-step async cover pipeline (MPD readpicture → filesystem regex → MPD albumart → CUE/cdda fallback → XDG cache → MusicBrainz/Cover Art Archive). Step 6 delegates to `musicbrainz.py` and caches its download into the step-5 dir. For web radio (title only, no album tag) the artist+album are recovered from MusicBrainz first so the cache keys on them. |
+| `musicbrainz.py` | Optional MusicBrainz / Cover Art Archive lookups (isolates the `musicbrainzngs` dep): `resolve_album(title)` (fielded recording search + artist/title validation, for web radio) and `fetch_cover(artist, album)` (release-group cover). No-op when the dep is absent. |
+| `itunes.py` / `deezer.py` | No-auth, stdlib-only cover-art fallbacks (`fetch_cover(artist, album)`) tried after MusicBrainz/CAA when it has no image — CAA coverage is sparse for some content. |
 | `notify.py` | Desktop notifications via `org.freedesktop.Notifications` over dbus-fast |
 | `locale/` | Compiled `.mo` files (built from `po/*.po`, shipped as package data) |
 
@@ -52,6 +54,8 @@ Helper scripts: `scripts/version.py` parses `__init__.py` and produces both PEP 
 - Python 3.11+
 - `python-mpd2 >= 3.1`
 - `dbus-fast >= 2.0`
+
+Optional (`pip install '.[cover]'`, Debian `python3-musicbrainzngs` + `python3-rapidfuzz` Recommends) — enables the cover.py step-6 MusicBrainz lookup: `musicbrainzngs >= 0.7` (recording/release search) + `rapidfuzz >= 3.0` (fuzzy artist/title validation). The iTunes/Deezer fallbacks need no extra deps (stdlib).
 
 Dev: `pytest`, `pytest-asyncio`, `mypy`, `ruff`, `babel`, `build`.
 
