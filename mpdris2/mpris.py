@@ -311,6 +311,8 @@ class MediaPlayer2Player(ServiceInterface):
         # Always replace + emit even if identical — MPRIS clients can
         # rely on a Metadata signal after every track change. Cheap.
         self._metadata = metadata
+        logger.debug("MPRIS metadata: %d keys%s", len(metadata),
+                     " (artUrl)" if "mpris:artUrl" in metadata else " (no artUrl)")
         self.emit_properties_changed({"Metadata": metadata})
 
     def update_volume(self, volume: float) -> None:
