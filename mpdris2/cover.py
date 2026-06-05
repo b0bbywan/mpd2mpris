@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
-from mpdris2 import deezer, itunes, musicbrainz
+from mpdris2 import deezer, itunes, musicbrainz, radiobrowser
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
@@ -168,6 +168,9 @@ class CoverFinder:
         # title -> (artist, album) | None, memoised so a web-radio title
         # resolves to a stable key across refreshes (and isn't re-queried).
         self._mb_title_cache: dict[str, tuple[str, str] | None] = {}
+        # stream URL -> station favicon URL | None (step 7), memoised so the
+        # station isn't re-queried on every track.
+        self._station_cache: dict[str, str | None] = {}
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -250,6 +253,12 @@ class CoverFinder:
             cover = await self._download_cover(artist, album, cache_path)
             if cover:
                 return cover
+
+        # 7. Web-radio station favicon URL — last resort for http(s)://
+        #    streams (returned as-is; MPRIS clients fetch artUrl themselves).
+        cover = await self._station_favicon(req.song_file)
+        if cover:
+            return cover
 
         logger.debug("cover: no cover found for %s", req.song_uri)
         return None
@@ -399,6 +408,17 @@ class CoverFinder:
                 if cover:
                     return cover
         return None
+
+    # --- step 7: web-radio station favicon URL ----------------------
+    async def _station_favicon(self, stream_url: str) -> str | None:
+        """Favicon URL of the station serving an http(s):// stream, memoised
+        per stream URL. Returned verbatim — no download, MPRIS clients fetch
+        the remote artUrl themselves."""
+        if not stream_url.startswith(("http://", "https://")):
+            return None
+        if stream_url not in self._station_cache:
+            self._station_cache[stream_url] = await radiobrowser.station_icon(stream_url)
+        return self._station_cache[stream_url]
 
     def _cache_download(self, path: Path, data: bytes) -> str | None:
         mime = _detect_mime(data)
