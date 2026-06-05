@@ -26,7 +26,8 @@ parsing/transferring for that guarantee.
    ``mpdris2.musicbrainz``, optional dependency). The download is written
    into the step-5 cache so the next play of the same album resolves
    locally. For web radio (only a title, no album tag) the artist+album
-   are first recovered from MusicBrainz so this path can key on them.
+   are first recovered from MusicBrainz, then Deezer as a fallback, so
+   this path can key on them.
 
 Requires MPD ≥ 0.22 (for ``readpicture``); the daemon won't error out
 on older servers but covers for non-standardly-named files won't work.
@@ -167,7 +168,7 @@ class CoverFinder:
         self._temp_cover: IO[bytes] | None = None
         # title -> (artist, album) | None, memoised so a web-radio title
         # resolves to a stable key across refreshes (and isn't re-queried).
-        self._mb_title_cache: dict[str, tuple[str, str] | None] = {}
+        self._title_key_cache: dict[str, tuple[str, str] | None] = {}
         # stream URL -> station favicon URL | None (step 7), memoised so the
         # station isn't re-queried on every track.
         self._station_cache: dict[str, str | None] = {}
@@ -374,9 +375,10 @@ class CoverFinder:
     async def _resolve_key(self, mpd_meta: dict) -> tuple[str, str]:
         """Return the (artist, album) the cache and cover lookups key on.
         From the tags when present; otherwise — web radio with only a
-        title — recovered from MusicBrainz, memoised per title. The memo
-        is what makes a repeat play resolve to the same key (so the disk
-        cache hits) instead of re-querying non-deterministically."""
+        title — recovered from MusicBrainz, then Deezer (broader catalogue)
+        as a fallback, memoised per title. The memo is what makes a repeat
+        play resolve to the same key (so the disk cache hits) instead of
+        re-querying non-deterministically."""
         artist = first(mpd_meta.get("artist"))
         album = first(mpd_meta.get("album"))
         if artist and album:
@@ -384,9 +386,11 @@ class CoverFinder:
         title = first(mpd_meta.get("title"))
         if not title:
             return artist, album
-        if title not in self._mb_title_cache:
-            self._mb_title_cache[title] = await musicbrainz.resolve_album(title)
-        return self._mb_title_cache[title] or (artist, album)
+        if title not in self._title_key_cache:
+            self._title_key_cache[title] = (
+                await musicbrainz.resolve_album(title) or await deezer.resolve_album(title)
+            )
+        return self._title_key_cache[title] or (artist, album)
 
     # --- step 5: downloaded-covers cache ----------------------------
     def _cache_path(self, artist: str, album: str) -> Path | None:
