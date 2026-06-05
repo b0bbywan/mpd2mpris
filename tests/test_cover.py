@@ -395,6 +395,38 @@ async def test_download_cover_rejects_unknown_mime(tmp_path: Path, monkeypatch) 
     assert not cached.exists()
 
 
+# --- _station_favicon (step 7) -------------------------------------------
+
+@pytest.mark.asyncio
+async def test_station_favicon_skips_non_http(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _icon(url: str) -> str:
+        calls.append(url)
+        return "https://x/favicon.ico"
+
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    assert await cf._station_favicon("relative/track.flac") is None
+    assert calls == []  # not an http(s) stream → never queried
+
+
+@pytest.mark.asyncio
+async def test_station_favicon_returns_url_and_memoises(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _icon(url: str) -> str:
+        calls.append(url)
+        return "https://x/favicon.ico"
+
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    stream = "http://hd.example.info/reggae-192.mp3"
+    assert await cf._station_favicon(stream) == "https://x/favicon.ico"
+    assert await cf._station_favicon(stream) == "https://x/favicon.ico"
+    assert calls == [stream]  # second call served from memo
+
+
 # --- _materialise + temp reuse via find() --------------------------------
 
 def test_materialise_writes_bytes_at_returned_uri() -> None:
