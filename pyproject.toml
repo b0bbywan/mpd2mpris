@@ -22,6 +22,9 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "babel", "build"]
+# MusicBrainz cover lookup (cover.py step 6): the recording search and its
+# fuzzy artist/title validation go together.
+cover = ["musicbrainzngs>=0.7"]
 
 [project.scripts]
 mpDris2 = "mpdris2.cli:main"
