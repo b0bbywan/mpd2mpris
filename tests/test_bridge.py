@@ -1,10 +1,9 @@
-"""Unit tests for bridge.py pure helpers + the ``_build_track_metadata``
-method — no MPD, no D-Bus.
+"""Unit tests for bridge.py pure helpers + the two-phase metadata/cover
+emission — no MPD, no D-Bus.
 
-``_build_track_metadata`` runs on a partially-initialised
-``MpdMprisBridge`` built via ``__new__`` (we skip the heavy ``__init__``
-which needs a running event loop). Only the attributes the method
-reads are set on it.
+These run on a partially-initialised ``MpdMprisBridge`` built via
+``__new__`` (we skip the heavy ``__init__`` which needs a running event
+loop). Only the attributes the methods under test read are set on it.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from dbus_fast import Variant
 
 from mpdris2.bridge import (
     MpdMprisBridge,
@@ -21,15 +21,19 @@ from mpdris2.bridge import (
 )
 
 
-def _bridge(cover_finder, music_dir=Path("/srv/music"),
-            url_handlers=("http://",), client=None):
-    """Minimal bridge stub — only the fields ``_build_track_metadata``
-    touches."""
+def _cover_bridge(cover_finder, *, notifier=None, client=None):
+    """Minimal bridge stub for the background cover path (``_resolve_cover``
+    + ``_maybe_notify_track``). ``_last_base`` is set per-test."""
     bridge = MpdMprisBridge.__new__(MpdMprisBridge)
     bridge.client = client or MagicMock()
-    bridge.music_dir = music_dir
-    bridge.url_handlers = list(url_handlers)
+    bridge.music_dir = Path("/srv/music")
+    bridge.url_handlers = ["http://"]
     bridge.cover_finder = cover_finder
+    bridge.player = MagicMock()
+    bridge.notifier = notifier
+    bridge._notify_paused = False
+    bridge._art = None
+    bridge._schedule = MagicMock()  # type: ignore[method-assign]
     return bridge
 
 
@@ -54,59 +58,65 @@ def test_seek_deviation_just_above_threshold_is_external() -> None:
     assert _is_external_seek({"elapsed": "5.0"}, 0.0, 15.7, 10.0)
 
 
-# --- _build_track_metadata (async) ----------------------------------------
+# --- _resolve_cover (background cover lookup) -----------------------------
 
 @pytest.mark.asyncio
-async def test_build_track_metadata_no_song_url_skips_cover() -> None:
-    """When the song has no file, cover_finder.find must NOT be called."""
+async def test_resolve_cover_no_song_url_skips_find() -> None:
+    """A song with no resolvable URL must not call cover_finder.find."""
     cover_finder = MagicMock()
-    cover_finder.find = MagicMock(side_effect=AssertionError("should not be called"))
-    bridge = _bridge(cover_finder)
-    meta = await bridge._build_track_metadata(song={"title": "x"}, status={})
-    assert "xesam:title" in meta
-    assert "mpris:artUrl" not in meta
+    cover_finder.find = AsyncMock(side_effect=AssertionError("should not be called"))
+    bridge = _cover_bridge(cover_finder)
+    base = {"xesam:title": Variant("s", "x")}
+    bridge._last_base = base
+    await bridge._resolve_cover({"title": "x"}, {}, _snap(state="play"), base)
+    cover_finder.find.assert_not_called()
+    bridge.player.update_metadata.assert_not_called()  # no cover to add
 
 
 @pytest.mark.asyncio
-async def test_build_track_metadata_cover_attached() -> None:
-    async def fake_find(*args, **kwargs):
-        return "file:///cache/cover.jpg"
+async def test_resolve_cover_attaches_arturl() -> None:
     cover_finder = MagicMock()
-    cover_finder.find = fake_find
-    bridge = _bridge(cover_finder)
-    meta = await bridge._build_track_metadata(
-        song={"title": "x", "file": "Artist/Song.flac"}, status={},
+    cover_finder.find = AsyncMock(return_value="file:///cache/cover.jpg")
+    bridge = _cover_bridge(cover_finder)
+    base = {"xesam:title": Variant("s", "x")}
+    bridge._last_base = base
+    await bridge._resolve_cover(
+        {"title": "x", "file": "Artist/Song.flac"}, {}, _snap(state="play"), base,
     )
-    assert meta["mpris:artUrl"].value == "file:///cache/cover.jpg"
+    emitted = bridge.player.update_metadata.call_args.args[0]
+    assert emitted["mpris:artUrl"].value == "file:///cache/cover.jpg"
+    assert emitted["xesam:title"].value == "x"  # base preserved
+    assert bridge._art == "file:///cache/cover.jpg"  # recorded for re-emits
 
 
 @pytest.mark.asyncio
-async def test_build_track_metadata_cover_exception_swallowed(caplog) -> None:
-    async def boom(*args, **kwargs):
-        raise RuntimeError("cover lookup broke")
+async def test_resolve_cover_exception_swallowed(caplog) -> None:
     cover_finder = MagicMock()
-    cover_finder.find = boom
-    bridge = _bridge(cover_finder)
+    cover_finder.find = AsyncMock(side_effect=RuntimeError("cover lookup broke"))
+    bridge = _cover_bridge(cover_finder)
+    base = {"xesam:title": Variant("s", "x")}
+    bridge._last_base = base
     with caplog.at_level("ERROR"):
-        meta = await bridge._build_track_metadata(
-            song={"title": "x", "file": "Artist/Song.flac"}, status={},
+        await bridge._resolve_cover(
+            {"title": "x", "file": "Artist/Song.flac"}, {}, _snap(state="play"), base,
         )
-    assert "mpris:artUrl" not in meta
-    assert "xesam:title" in meta
+    bridge.player.update_metadata.assert_not_called()  # no cover to add
     assert any("cover lookup failed" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_build_track_metadata_cover_none_no_arturl() -> None:
-    async def empty(*args, **kwargs):
-        return None
+async def test_resolve_cover_bails_when_track_changed() -> None:
+    """A cover that resolves after the track moved on must not be emitted."""
     cover_finder = MagicMock()
-    cover_finder.find = empty
-    bridge = _bridge(cover_finder)
-    meta = await bridge._build_track_metadata(
-        song={"file": "Artist/Song.flac"}, status={},
+    cover_finder.find = AsyncMock(return_value="file:///cache/cover.jpg")
+    bridge = _cover_bridge(cover_finder)
+    base = {"xesam:title": Variant("s", "x")}
+    bridge._last_base = {"xesam:title": Variant("s", "newer")}  # changed meanwhile
+    await bridge._resolve_cover(
+        {"title": "x", "file": "Artist/Song.flac"}, {}, _snap(state="play"), base,
     )
-    assert "mpris:artUrl" not in meta
+    bridge.player.update_metadata.assert_not_called()
+    bridge._schedule.assert_not_called()  # no stale notification either
 
 
 # --- _previous_cdaware -----------------------------------------------------
@@ -228,18 +238,19 @@ def test_snapshot_state_defaults_to_stop_when_missing() -> None:
 
 # --- _apply_current_state --------------------------------------------------
 
-def _apply_bridge(cover_finder=None, **player_calls) -> MpdMprisBridge:
-    """Bridge with a mocked player (capture update_* calls) and the
-    minimal cover/music wiring ``_build_track_metadata`` needs."""
+def _apply_bridge() -> MpdMprisBridge:
+    """Bridge with a mocked player (capture update_* calls); the background
+    cover scheduler is mocked out so ``_apply_current_state`` only emits
+    the cover-free base synchronously."""
     bridge = MpdMprisBridge.__new__(MpdMprisBridge)
     bridge.client = MagicMock()
     bridge.music_dir = Path("/srv/music")
     bridge.url_handlers = ["http://"]
-    if cover_finder is None:
-        cover_finder = MagicMock()
-        cover_finder.find = AsyncMock(return_value=None)
-    bridge.cover_finder = cover_finder
     bridge.player = MagicMock()
+    bridge._last_base = {}
+    bridge._art = None
+    bridge._cover_task = None
+    bridge._schedule_cover = MagicMock()  # type: ignore[method-assign]
     return bridge
 
 
@@ -261,14 +272,13 @@ def _snap(
     )
 
 
-@pytest.mark.asyncio
-async def test_apply_pushes_basic_player_state() -> None:
+def test_apply_pushes_basic_player_state() -> None:
     bridge = _apply_bridge()
     status = {
         "state": "play", "elapsed": "5.0",
         "repeat": "1", "single": "1", "random": "1", "volume": "50",
     }
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         status, {"id": "1", "title": "x"},
         _snap(state="play", new_pos_s=5.0),
     )
@@ -279,21 +289,19 @@ async def test_apply_pushes_basic_player_state() -> None:
     bridge.player.update_position.assert_called_with(5_000_000)
 
 
-@pytest.mark.asyncio
-async def test_apply_skips_volume_when_unreportable() -> None:
+def test_apply_skips_volume_when_unreportable() -> None:
     bridge = _apply_bridge()
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play", "volume": "-1"}, {"id": "1"}, _snap(),
     )
     bridge.player.update_volume.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_apply_emits_seeked_on_external_seek() -> None:
+def test_apply_emits_seeked_on_external_seek() -> None:
     bridge = _apply_bridge()
     # 10s wall-clock elapsed since old_time=0, old elapsed=5 → expected 15s;
     # new_pos_s=30s → external seek.
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play"}, {"id": "1"},
         _snap(old_state="play", state="play", same_song=True,
               old_elapsed=5.0, old_time=0.0, now=10.0, new_pos_s=30.0),
@@ -301,10 +309,9 @@ async def test_apply_emits_seeked_on_external_seek() -> None:
     bridge.player.emit_seeked.assert_called_once_with(30_000_000)
 
 
-@pytest.mark.asyncio
-async def test_apply_no_seeked_on_natural_progression() -> None:
+def test_apply_no_seeked_on_natural_progression() -> None:
     bridge = _apply_bridge()
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play"}, {"id": "1"},
         _snap(old_state="play", state="play", same_song=True,
               old_elapsed=5.0, old_time=0.0, now=10.0, new_pos_s=15.0),
@@ -312,10 +319,9 @@ async def test_apply_no_seeked_on_natural_progression() -> None:
     bridge.player.emit_seeked.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_apply_no_seeked_on_song_change() -> None:
+def test_apply_no_seeked_on_song_change() -> None:
     bridge = _apply_bridge()
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play"}, {"id": "2"},
         _snap(old_state="play", state="play", same_song=False,
               new_pos_s=30.0),
@@ -323,49 +329,97 @@ async def test_apply_no_seeked_on_song_change() -> None:
     bridge.player.emit_seeked.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_apply_can_go_next_from_nextsongid() -> None:
+def test_apply_can_go_next_from_nextsongid() -> None:
     bridge = _apply_bridge()
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play", "nextsongid": "5"}, {"id": "1"}, _snap(),
     )
     bridge.player.update_capabilities.assert_any_call(can_go_next=True)
 
 
-@pytest.mark.asyncio
-async def test_apply_can_go_next_from_repeat() -> None:
+def test_apply_can_go_next_from_repeat() -> None:
     bridge = _apply_bridge()
-    await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play", "repeat": "1"}, {"id": "1"}, _snap(),
     )
     bridge.player.update_capabilities.assert_any_call(can_go_next=True)
 
 
-@pytest.mark.asyncio
-async def test_apply_no_song_clears_metadata_and_returns_empty() -> None:
+def test_apply_no_song_clears_metadata() -> None:
     bridge = _apply_bridge()
-    meta = await bridge._apply_current_state(
-        {"state": "stop"}, {}, _snap(state="stop"),
-    )
-    assert meta == {}
+    bridge._last_base = {"xesam:title": Variant("s", "old")}
+    bridge._art = "file:///cache/old.jpg"
+    bridge._apply_current_state({"state": "stop"}, {}, _snap(state="stop"))
     bridge.player.update_metadata.assert_called_with({})
     bridge.player.update_capabilities.assert_any_call(can_seek=False)
+    assert bridge._last_base == {}
+    assert bridge._art is None
 
 
-@pytest.mark.asyncio
-async def test_apply_song_returns_meta_with_can_seek() -> None:
+def test_apply_song_emits_cover_free_base_and_schedules_cover() -> None:
     bridge = _apply_bridge()
-    meta = await bridge._apply_current_state(
+    bridge._apply_current_state(
         {"state": "play"},
         {"id": "1", "title": "Track", "time": "180"},
         _snap(state="play"),
     )
-    assert "xesam:title" in meta
-    bridge.player.update_metadata.assert_called_with(meta)
+    emitted = bridge.player.update_metadata.call_args.args[0]
+    assert "xesam:title" in emitted
+    assert "mpris:artUrl" not in emitted  # cover resolves off the critical path
     bridge.player.update_capabilities.assert_any_call(can_seek=True)
+    bridge._schedule_cover.assert_called_once()
+    assert bridge._last_base == emitted
 
 
-# --- _emit_notifications ---------------------------------------------------
+def test_apply_same_tags_skips_metadata_reemit() -> None:
+    """A status-only refresh (identical tags) must not re-emit Metadata or
+    restart the cover lookup — that would drop a resolved mpris:artUrl."""
+    bridge = _apply_bridge()
+    song = {"id": "1", "title": "Track", "time": "180"}
+    bridge._apply_current_state({"state": "play"}, song, _snap(state="play"))
+    bridge.player.update_metadata.reset_mock()
+    bridge._schedule_cover.reset_mock()
+    bridge._apply_current_state(
+        {"state": "play"}, song, _snap(state="play", same_song=True),
+    )
+    bridge.player.update_metadata.assert_not_called()
+    bridge._schedule_cover.assert_not_called()
+
+
+def test_apply_carries_art_across_same_stream_title_change() -> None:
+    """Web radio: the ICY title changes under the same song id. The cover
+    already shown must be carried into the new emit, not blanked — this is
+    the regression that left mpris:artUrl empty on every title change."""
+    bridge = _apply_bridge()
+    bridge._last_base = {"xesam:title": Variant("s", "old title")}
+    bridge._art = "https://station/favicon.ico"
+    bridge._apply_current_state(
+        {"state": "play"},
+        {"id": "2", "title": "New - Title", "name": "Some Radio"},
+        _snap(state="play", same_song=True),
+    )
+    emitted = bridge.player.update_metadata.call_args.args[0]
+    assert emitted["mpris:artUrl"].value == "https://station/favicon.ico"
+    assert bridge._art == "https://station/favicon.ico"  # kept
+
+
+def test_apply_drops_art_on_real_track_change() -> None:
+    """A genuine track change (different song id) drops the old cover — a
+    fresh one is coming via the scheduled lookup."""
+    bridge = _apply_bridge()
+    bridge._last_base = {"xesam:title": Variant("s", "prev")}
+    bridge._art = "file:///cache/prev.jpg"
+    bridge._apply_current_state(
+        {"state": "play"},
+        {"id": "9", "title": "Next", "time": "100"},
+        _snap(state="play", same_song=False),
+    )
+    emitted = bridge.player.update_metadata.call_args.args[0]
+    assert "mpris:artUrl" not in emitted
+    assert bridge._art is None
+
+
+# --- _maybe_notify_stop / _maybe_notify_track -----------------------------
 
 def _notif_bridge(*, notifier=None, notify_paused: bool = False) -> MpdMprisBridge:
     bridge = MpdMprisBridge.__new__(MpdMprisBridge)
@@ -382,51 +436,41 @@ def _fake_notifier():
     return n
 
 
-def test_emit_no_notifier_is_noop() -> None:
+def test_notify_stop_no_notifier_is_noop() -> None:
     bridge = _notif_bridge(notifier=None)
-    bridge._emit_notifications(_snap(state="stop", old_state="play"), {"x": 1})
-    # Nothing to assert other than no crash; _schedule was replaced
-    # with a mock and should not have been called.
+    bridge._maybe_notify_stop(_snap(state="stop", old_state="play"), {"id": "1"})
     bridge._schedule.assert_not_called()  # type: ignore[attr-defined]
 
 
-def test_emit_empty_meta_is_noop() -> None:
-    """Empty queue (no current song) keeps the daemon silent — preserves
-    the early-return behaviour of the pre-refactor ``refresh``."""
+def test_notify_stop_no_song_is_noop() -> None:
+    """Empty queue (no current song) keeps the daemon silent."""
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier)
-    bridge._emit_notifications(
-        _snap(old_state="play", state="stop"), meta={},
-    )
+    bridge._maybe_notify_stop(_snap(old_state="play", state="stop"), {})
     bridge._schedule.assert_not_called()  # type: ignore[attr-defined]
     notifier.notify.assert_not_called()
-    notifier.notify_track.assert_not_called()
 
 
-def test_emit_stopped_bubble_on_play_to_stop() -> None:
+def test_notify_stopped_bubble_on_play_to_stop() -> None:
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier)
-    bridge._emit_notifications(
-        _snap(old_state="play", state="stop", same_song=True), {"x": 1},
+    bridge._maybe_notify_stop(
+        _snap(old_state="play", state="stop", same_song=True), {"id": "1"},
     )
     notifier.notify.assert_called_once()
-    # Stopped is the one-shot — track-change must not also fire.
-    notifier.notify_track.assert_not_called()
 
 
-def test_emit_no_stopped_on_stop_to_stop() -> None:
+def test_notify_no_stopped_on_stop_to_stop() -> None:
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier)
-    bridge._emit_notifications(
-        _snap(old_state="stop", state="stop"), {"x": 1},
-    )
+    bridge._maybe_notify_stop(_snap(old_state="stop", state="stop"), {"id": "1"})
     notifier.notify.assert_not_called()
 
 
-def test_emit_track_change_on_play() -> None:
+def test_notify_track_change_on_play() -> None:
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier)
-    bridge._emit_notifications(
+    bridge._maybe_notify_track(
         _snap(old_state="play", state="play",
               same_song=False, new_pos_s=2.5),
         {"xesam:title": "x"},
@@ -437,28 +481,37 @@ def test_emit_track_change_on_play() -> None:
     assert args[2] == 2_500_000
 
 
-def test_emit_no_track_change_on_same_song() -> None:
+def test_notify_track_empty_meta_is_noop() -> None:
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier)
-    bridge._emit_notifications(
+    bridge._maybe_notify_track(
+        _snap(old_state="play", state="play", same_song=False), {},
+    )
+    notifier.notify_track.assert_not_called()
+
+
+def test_notify_no_track_change_on_same_song() -> None:
+    notifier = _fake_notifier()
+    bridge = _notif_bridge(notifier=notifier)
+    bridge._maybe_notify_track(
         _snap(old_state="play", state="play", same_song=True), {"x": 1},
     )
     notifier.notify_track.assert_not_called()
 
 
-def test_emit_no_track_change_when_paused_without_flag() -> None:
+def test_notify_no_track_change_when_paused_without_flag() -> None:
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier, notify_paused=False)
-    bridge._emit_notifications(
+    bridge._maybe_notify_track(
         _snap(old_state="play", state="pause", same_song=False), {"x": 1},
     )
     notifier.notify_track.assert_not_called()
 
 
-def test_emit_track_change_when_paused_with_flag() -> None:
+def test_notify_track_change_when_paused_with_flag() -> None:
     notifier = _fake_notifier()
     bridge = _notif_bridge(notifier=notifier, notify_paused=True)
-    bridge._emit_notifications(
+    bridge._maybe_notify_track(
         _snap(old_state="play", state="pause", same_song=False), {"x": 1},
     )
     notifier.notify_track.assert_called_once()
