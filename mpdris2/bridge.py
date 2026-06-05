@@ -153,6 +153,13 @@ class MpdMprisBridge:
         # let them be GC'd mid-execution (asyncio docs explicitly warn).
         self.bg_tasks: set[asyncio.Task] = set()
 
+        # Change-detection state: last cover-free Metadata, the artUrl
+        # currently shown (carried into re-emits so it doesn't flicker on a
+        # web-radio metadata churn), and the in-flight cover lookup.
+        self._last_base: dict[str, Variant] = {}
+        self._art: str | None = None
+        self._cover_task: asyncio.Task | None = None
+
         self.cover_finder = CoverFinder(
             CoverFinderConfig(
                 music_dir=self.music_dir,
@@ -322,34 +329,61 @@ class MpdMprisBridge:
 
     # --- Metadata + cover -----------------------------------------------
 
-    async def _build_track_metadata(
+    def _with_art(self, base: dict[str, Variant]) -> dict[str, Variant]:
+        """``base`` plus the currently-shown ``mpris:artUrl`` (if any), so a
+        re-emit keeps the cover instead of blanking it."""
+        if self._art is None:
+            return base
+        return {**base, "mpris:artUrl": Variant("s", self._art)}
+
+    def _cancel_cover(self) -> None:
+        if self._cover_task and not self._cover_task.done():
+            self._cover_task.cancel()
+        self._cover_task = None
+
+    def _schedule_cover(self, song: dict, status: dict, snap: _RefreshSnapshot, base: dict[str, Variant]) -> None:
+        """Resolve the cover for ``base`` off the critical path, replacing
+        any in-flight lookup for the previous track."""
+        self._cancel_cover()
+        task = self._loop.create_task(self._resolve_cover(song, status, snap, base))
+        self._cover_task = task
+        self.bg_tasks.add(task)
+        task.add_done_callback(self._on_bg_done)
+
+    async def _resolve_cover(
         self,
         song: dict,
         status: dict,
-    ) -> dict[str, Variant]:
-        """Translate ``song`` into MPRIS Metadata and resolve cover art.
-        Cover lookup failures are swallowed (logged) — the metadata is
-        still returned, just without ``mpris:artUrl``."""
-        meta = mpd_to_mpris(song, self.music_dir, self.url_handlers)
+        snap: _RefreshSnapshot,
+        base: dict[str, Variant],
+    ) -> None:
+        """Resolve cover art (the slow, network-bound part) then re-emit
+        Metadata with ``mpris:artUrl`` and fire the track-change bubble —
+        now carrying the cover. Bails when the track changed while we were
+        resolving, so a slow lookup never lands on the wrong song."""
+        cover = None
         url = song_url(song, self.music_dir, self.url_handlers)
-        if not url:
-            return meta
-        try:
-            cover = await self.cover_finder.find(
-                SongLookup(
-                    client=self.client,
-                    song_uri=url,
-                    song_file=song.get("file", ""),
-                    mpd_meta=song,
-                    last_loaded_playlist=status.get("lastloadedplaylist", ""),
+        if url:
+            try:
+                cover = await self.cover_finder.find(
+                    SongLookup(
+                        client=self.client,
+                        song_uri=url,
+                        song_file=song.get("file", ""),
+                        mpd_meta=song,
+                        last_loaded_playlist=status.get("lastloadedplaylist", ""),
+                    )
                 )
-            )
-        except Exception:
-            logger.exception("cover lookup failed")
-            return meta
-        if cover:
-            meta["mpris:artUrl"] = Variant("s", cover)
-        return meta
+            except Exception:
+                logger.exception("cover lookup failed")
+        if self._last_base is not base:  # track moved on while resolving
+            return
+        # Commit the result, re-emitting on change — blanks a stale cover
+        # carried over when a web-radio title change resolves to none.
+        if cover != self._art:
+            self._art = cover
+            self.player.update_metadata(self._with_art(base))
+        self._maybe_notify_track(snap, self._with_art(base))
 
     # --- Refresh: MPD status -> MPRIS properties ------------------------
 
@@ -365,8 +399,8 @@ class MpdMprisBridge:
             return
 
         snap = self._snapshot(status, song)
-        meta = await self._apply_current_state(status, song, snap)
-        self._emit_notifications(snap, meta)
+        self._apply_current_state(status, song, snap)
+        self._maybe_notify_stop(snap, song)
 
     def _snapshot(self, status: dict, song: dict) -> _RefreshSnapshot:
         """Capture the previous status/song/time, advance ``self.last_*``
@@ -385,16 +419,16 @@ class MpdMprisBridge:
         self.last_status, self.last_song, self.last_time = status, song, now
         return snap
 
-    async def _apply_current_state(
+    def _apply_current_state(
         self,
         status: dict,
         song: dict,
         snap: _RefreshSnapshot,
-    ) -> dict[str, Variant]:
+    ) -> None:
         """Push the current MPD state onto the MPRIS player interface.
         Emits ``Seeked`` when an external seek is detected against the
-        previous snapshot. Returns the metadata dict (empty when no
-        song is loaded)."""
+        previous snapshot, and Metadata (cover-free) the moment the track
+        changes — the cover is then resolved off the critical path."""
         self.player.update_playback_status(playback_status_from(snap.state))
 
         repeat, single = parse_loop_flags(status)
@@ -429,29 +463,30 @@ class MpdMprisBridge:
         if not song:
             self.player.update_metadata({})
             self.player.update_capabilities(can_seek=False)
-            return {}
-
-        meta = await self._build_track_metadata(song, status)
-        self.player.update_metadata(meta)
-        self.player.update_capabilities(can_seek="mpris:length" in meta)
-        return meta
-
-    def _emit_notifications(
-        self,
-        snap: _RefreshSnapshot,
-        meta: dict[str, Variant],
-    ) -> None:
-        """Fire libnotify bubbles for state transitions: a one-shot
-        "Stopped" on play/pause → stop, and a track-change bubble while
-        playing (or paused when ``[Bling] notify_paused`` is on).
-
-        Both gates require a current song (``meta`` non-empty) — an
-        empty queue should stay silent."""
-        if not self.notifier or not meta:
+            self._last_base = {}
+            self._art = None
+            self._cancel_cover()
             return
 
-        old_state = snap.old_status.get("state")
-        if old_state in ("play", "pause") and snap.state == "stop":
+        # Cover-free Metadata first (cover resolved off the critical path);
+        # same tags → no re-emit. Carry artUrl across, but drop it on a real
+        # song change so a fresh cover replaces it.
+        base = mpd_to_mpris(song, self.music_dir, self.url_handlers)
+        if base == self._last_base:
+            return
+        self._last_base = base
+        if not snap.same_song:
+            self._art = None
+        self.player.update_metadata(self._with_art(base))
+        self.player.update_capabilities(can_seek="mpris:length" in base)
+        self._schedule_cover(song, status, snap, base)
+
+    def _maybe_notify_stop(self, snap: _RefreshSnapshot, song: dict) -> None:
+        """One-shot "Stopped" bubble on a play/pause → stop transition.
+        Requires a current song — an empty queue should stay silent."""
+        if not self.notifier or not song:
+            return
+        if snap.old_status.get("state") in ("play", "pause") and snap.state == "stop":
             self._schedule(
                 self.notifier.notify(
                     IDENTITY,
@@ -460,6 +495,12 @@ class MpdMprisBridge:
                 )
             )
 
+    def _maybe_notify_track(self, snap: _RefreshSnapshot, meta: dict[str, Variant]) -> None:
+        """Track-change bubble while playing (or paused when ``[Bling]
+        notify_paused`` is on). Fired from the cover path so the bubble
+        carries the cover; gated on a real song change."""
+        if not self.notifier or not meta:
+            return
         notify_state = snap.state == "play" or (snap.state == "pause" and self._notify_paused)
         if not snap.same_song and notify_state:
             self._schedule(
@@ -572,6 +613,9 @@ class MpdMprisBridge:
             # while we reconnect.
             self.player.update_playback_status("Stopped")
             self.player.update_metadata({})
+            self._last_base = {}
+            self._art = None
+            self._cancel_cover()
 
     async def close(self) -> None:
         """Drain in-flight tasks and release the bus name. The bus
