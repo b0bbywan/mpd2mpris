@@ -315,8 +315,18 @@ async def test_resolve_key_recovers_from_title(tmp_path: Path, monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_resolve_key_empty_when_unresolved(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _async_return(None))
+    monkeypatch.setattr("mpdris2.cover.deezer.resolve_album", _async_return(None))
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
     assert await cf._resolve_key({"title": "obscure jingle"}) == ("", "")
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_falls_back_to_deezer(tmp_path: Path, monkeypatch) -> None:
+    # MusicBrainz can't resolve the title; Deezer (broader catalogue) can.
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _async_return(None))
+    monkeypatch.setattr("mpdris2.cover.deezer.resolve_album", _async_return(("Dan Bawaka.Z", "Terre Mère")))
+    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
+    assert await cf._resolve_key({"title": "Dan Bawaka.z - Rasta Dub"}) == ("Dan Bawaka.Z", "Terre Mère")
 
 
 @pytest.mark.asyncio
@@ -344,6 +354,7 @@ async def test_resolve_key_memoises_negative(tmp_path: Path, monkeypatch) -> Non
         return None
 
     monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _resolve)
+    monkeypatch.setattr("mpdris2.cover.deezer.resolve_album", _async_return(None))
     cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
     meta = {"title": "-- AUTOPROMO - Twittos"}
     assert await cf._resolve_key(meta) == ("", "")
