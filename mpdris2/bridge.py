@@ -2,7 +2,7 @@
 
 The bridge owns the per-connection state (MPD client, capabilities,
 last status snapshot) and the long-lived resources (D-Bus connection,
-cover finder, notifier). MPRIS callbacks are methods rather than
+cover finder). MPRIS callbacks are methods rather than
 closures so they're testable in isolation and don't need ``nonlocal``.
 
 Shutdown is driven by ``CancelledError`` propagating from the
@@ -19,7 +19,6 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from gettext import gettext as _
 from pathlib import Path
 from typing import Any
 
@@ -36,12 +35,10 @@ from mpdris2.cover import (
 )
 from mpdris2.mpris import (
     BUS_NAME,
-    IDENTITY,
     ROOT_PATH,
     MediaPlayer2,
     MediaPlayer2Player,
 )
-from mpdris2.notify import Notifier
 from mpdris2.translate import (
     DEFAULT_URL_HANDLERS,
     loop_status_from,
@@ -80,7 +77,6 @@ class BridgeConfig:
     cover_deezer: bool
     cover_mympd_uri: str | None
     cdprev: bool
-    notify_paused: bool
     no_reconnect: bool
 
 
@@ -105,8 +101,8 @@ def _is_external_seek(old_status: dict, old_time: float, new_pos_s: float, now: 
 class _RefreshSnapshot:
     """Per-refresh diff between the previous and current MPD status.
     Carries the old values (for transition detection) plus the few new
-    values both ``_apply_current_state`` and ``_emit_notifications``
-    consume — so neither helper has to re-derive them."""
+    values ``_apply_current_state`` consumes — so it doesn't re-derive
+    them."""
 
     old_status: dict
     old_song: dict
@@ -128,7 +124,6 @@ class MpdMprisBridge:
         config: BridgeConfig,
         *,
         bus: MessageBus,
-        notifier: Notifier | None = None,
     ) -> None:
         self._loop = asyncio.get_running_loop()
 
@@ -176,14 +171,8 @@ class MpdMprisBridge:
             )
         )
         self.bus = bus
-        self.notifier = notifier
         self._cdprev = config.cdprev
-        self._notify_paused = config.notify_paused
         self._no_reconnect = config.no_reconnect
-        # ``True`` once we've held a live MPD connection at least once
-        # — gates the "Reconnected" / "Disconnected" bubbles so neither
-        # fires on the very first connect attempt.
-        self._was_connected = False
 
         self.player = MediaPlayer2Player(
             on_play=self.on_play,
@@ -350,11 +339,11 @@ class MpdMprisBridge:
             self._cover_task.cancel()
         self._cover_task = None
 
-    def _schedule_cover(self, song: dict, status: dict, snap: _RefreshSnapshot, base: dict[str, Variant]) -> None:
+    def _schedule_cover(self, song: dict, status: dict, base: dict[str, Variant]) -> None:
         """Resolve the cover for ``base`` off the critical path, replacing
         any in-flight lookup for the previous track."""
         self._cancel_cover()
-        task = self._loop.create_task(self._resolve_cover(song, status, snap, base))
+        task = self._loop.create_task(self._resolve_cover(song, status, base))
         self._cover_task = task
         self.bg_tasks.add(task)
         task.add_done_callback(self._on_bg_done)
@@ -363,13 +352,11 @@ class MpdMprisBridge:
         self,
         song: dict,
         status: dict,
-        snap: _RefreshSnapshot,
         base: dict[str, Variant],
     ) -> None:
         """Resolve cover art (the slow, network-bound part) then re-emit
-        Metadata with ``mpris:artUrl`` and fire the track-change bubble —
-        now carrying the cover. Bails when the track changed while we were
-        resolving, so a slow lookup never lands on the wrong song."""
+        Metadata with ``mpris:artUrl``. Bails when the track changed while
+        we were resolving, so a slow lookup never lands on the wrong song."""
         cover = None
         url = song_url(song, self.music_dir, self.url_handlers)
         if url:
@@ -392,7 +379,6 @@ class MpdMprisBridge:
         if cover != self._art:
             self._art = cover
             self.player.update_metadata(self._with_art(base))
-        self._maybe_notify_track(snap, self._with_art(base))
 
     # --- Refresh: MPD status -> MPRIS properties ------------------------
 
@@ -409,12 +395,11 @@ class MpdMprisBridge:
 
         snap = self._snapshot(status, song)
         self._apply_current_state(status, song, snap)
-        self._maybe_notify_stop(snap, song)
 
     def _snapshot(self, status: dict, song: dict) -> _RefreshSnapshot:
         """Capture the previous status/song/time, advance ``self.last_*``
         to the new values, and return the deltas + derived values that
-        both ``_apply_current_state`` and ``_emit_notifications`` need."""
+        ``_apply_current_state`` needs."""
         now = self._loop.time()
         snap = _RefreshSnapshot(
             old_status=self.last_status,
@@ -491,43 +476,13 @@ class MpdMprisBridge:
             self._art = None
         self.player.update_metadata(self._with_art(base))
         self.player.update_capabilities(can_seek="mpris:length" in base)
-        self._schedule_cover(song, status, snap, base)
-
-    def _maybe_notify_stop(self, snap: _RefreshSnapshot, song: dict) -> None:
-        """One-shot "Stopped" bubble on a play/pause → stop transition.
-        Requires a current song — an empty queue should stay silent."""
-        if not self.notifier or not song:
-            return
-        if snap.old_status.get("state") in ("play", "pause") and snap.state == "stop":
-            self._schedule(
-                self.notifier.notify(
-                    IDENTITY,
-                    _("Stopped"),
-                    "media-playback-stop-symbolic",
-                )
-            )
-
-    def _maybe_notify_track(self, snap: _RefreshSnapshot, meta: dict[str, Variant]) -> None:
-        """Track-change bubble while playing (or paused when ``[Bling]
-        notify_paused`` is on). Fired from the cover path so the bubble
-        carries the cover; gated on a real song change."""
-        if not self.notifier or not meta:
-            return
-        notify_state = snap.state == "play" or (snap.state == "pause" and self._notify_paused)
-        if not snap.same_song and notify_state:
-            self._schedule(
-                self.notifier.notify_track(
-                    meta,
-                    snap.state,
-                    int(snap.new_pos_s * 1_000_000),
-                )
-            )
+        self._schedule_cover(song, status, base)
 
     # --- Lifecycle ------------------------------------------------------
 
     async def setup(self) -> None:
         """Export MPRIS interfaces on the injected bus and request the
-        well-known name. The bus + notifier come pre-built from cli.py."""
+        well-known name. The bus comes pre-built from cli.py."""
         self.bus.export(ROOT_PATH, MediaPlayer2())
         self.bus.export(ROOT_PATH, self.player)
         await self.bus.request_name(BUS_NAME)
@@ -591,29 +546,12 @@ class MpdMprisBridge:
 
             await self.refresh()
 
-            # Fire the reconnect bubble *after* refresh so MPRIS
-            # subscribers see the fresh metadata before the popup.
-            if self._was_connected and self.notifier:
-                self._schedule(self.notifier.notify(IDENTITY, _("Reconnected"), ""))
-            self._was_connected = True
-
             try:
                 async for subsystems in new_client.idle():
                     if WATCHED_SUBSYSTEMS.intersection(subsystems):
                         await self.refresh()
             except (mpd.ConnectionError, OSError) as e:
                 logger.warning("MPD idle loop ended: %s", e)
-                # Genuine MPD drop, not an intentional shutdown — emit
-                # the bubble before tearing down so it appears while
-                # the bus is still healthy.
-                if self.notifier:
-                    self._schedule(
-                        self.notifier.notify(
-                            IDENTITY,
-                            _("Disconnected"),
-                            "error",
-                        )
-                    )
             finally:
                 with contextlib.suppress(Exception):
                     new_client.disconnect()

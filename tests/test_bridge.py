@@ -21,19 +21,16 @@ from mpdris2.bridge import (
 )
 
 
-def _cover_bridge(cover_finder, *, notifier=None, client=None):
-    """Minimal bridge stub for the background cover path (``_resolve_cover``
-    + ``_maybe_notify_track``). ``_last_base`` is set per-test."""
+def _cover_bridge(cover_finder, *, client=None):
+    """Minimal bridge stub for the background cover path (``_resolve_cover``).
+    ``_last_base`` is set per-test."""
     bridge = MpdMprisBridge.__new__(MpdMprisBridge)
     bridge.client = client or MagicMock()
     bridge.music_dir = Path("/srv/music")
     bridge.url_handlers = ["http://"]
     bridge.cover_finder = cover_finder
     bridge.player = MagicMock()
-    bridge.notifier = notifier
-    bridge._notify_paused = False
     bridge._art = None
-    bridge._schedule = MagicMock()  # type: ignore[method-assign]
     return bridge
 
 
@@ -68,7 +65,7 @@ async def test_resolve_cover_no_song_url_skips_find() -> None:
     bridge = _cover_bridge(cover_finder)
     base = {"xesam:title": Variant("s", "x")}
     bridge._last_base = base
-    await bridge._resolve_cover({"title": "x"}, {}, _snap(state="play"), base)
+    await bridge._resolve_cover({"title": "x"}, {}, base)
     cover_finder.find.assert_not_called()
     bridge.player.update_metadata.assert_not_called()  # no cover to add
 
@@ -81,7 +78,7 @@ async def test_resolve_cover_attaches_arturl() -> None:
     base = {"xesam:title": Variant("s", "x")}
     bridge._last_base = base
     await bridge._resolve_cover(
-        {"title": "x", "file": "Artist/Song.flac"}, {}, _snap(state="play"), base,
+        {"title": "x", "file": "Artist/Song.flac"}, {}, base,
     )
     emitted = bridge.player.update_metadata.call_args.args[0]
     assert emitted["mpris:artUrl"].value == "file:///cache/cover.jpg"
@@ -98,7 +95,7 @@ async def test_resolve_cover_exception_swallowed(caplog) -> None:
     bridge._last_base = base
     with caplog.at_level("ERROR"):
         await bridge._resolve_cover(
-            {"title": "x", "file": "Artist/Song.flac"}, {}, _snap(state="play"), base,
+            {"title": "x", "file": "Artist/Song.flac"}, {}, base,
         )
     bridge.player.update_metadata.assert_not_called()  # no cover to add
     assert any("cover lookup failed" in r.message for r in caplog.records)
@@ -113,10 +110,9 @@ async def test_resolve_cover_bails_when_track_changed() -> None:
     base = {"xesam:title": Variant("s", "x")}
     bridge._last_base = {"xesam:title": Variant("s", "newer")}  # changed meanwhile
     await bridge._resolve_cover(
-        {"title": "x", "file": "Artist/Song.flac"}, {}, _snap(state="play"), base,
+        {"title": "x", "file": "Artist/Song.flac"}, {}, base,
     )
     bridge.player.update_metadata.assert_not_called()
-    bridge._schedule.assert_not_called()  # no stale notification either
 
 
 # --- _previous_cdaware -----------------------------------------------------
@@ -222,8 +218,8 @@ def test_snapshot_same_song_when_ids_match() -> None:
 
 
 def test_snapshot_first_refresh_is_not_same_song() -> None:
-    # No previous song → same_song must be False so track-change
-    # notifications fire on the very first track.
+    # No previous song → same_song must be False (cover resolved fresh
+    # on the very first track).
     bridge = _snapshot_bridge()
     snap = bridge._snapshot({"state": "play"}, {"id": "1"})
     assert snap.same_song is False
@@ -417,101 +413,3 @@ def test_apply_drops_art_on_real_track_change() -> None:
     emitted = bridge.player.update_metadata.call_args.args[0]
     assert "mpris:artUrl" not in emitted
     assert bridge._art is None
-
-
-# --- _maybe_notify_stop / _maybe_notify_track -----------------------------
-
-def _notif_bridge(*, notifier=None, notify_paused: bool = False) -> MpdMprisBridge:
-    bridge = MpdMprisBridge.__new__(MpdMprisBridge)
-    bridge.notifier = notifier
-    bridge._notify_paused = notify_paused
-    bridge._schedule = MagicMock()  # type: ignore[method-assign]
-    return bridge
-
-
-def _fake_notifier():
-    n = MagicMock()
-    n.notify = MagicMock(return_value=MagicMock())
-    n.notify_track = MagicMock(return_value=MagicMock())
-    return n
-
-
-def test_notify_stop_no_notifier_is_noop() -> None:
-    bridge = _notif_bridge(notifier=None)
-    bridge._maybe_notify_stop(_snap(state="stop", old_state="play"), {"id": "1"})
-    bridge._schedule.assert_not_called()  # type: ignore[attr-defined]
-
-
-def test_notify_stop_no_song_is_noop() -> None:
-    """Empty queue (no current song) keeps the daemon silent."""
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier)
-    bridge._maybe_notify_stop(_snap(old_state="play", state="stop"), {})
-    bridge._schedule.assert_not_called()  # type: ignore[attr-defined]
-    notifier.notify.assert_not_called()
-
-
-def test_notify_stopped_bubble_on_play_to_stop() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier)
-    bridge._maybe_notify_stop(
-        _snap(old_state="play", state="stop", same_song=True), {"id": "1"},
-    )
-    notifier.notify.assert_called_once()
-
-
-def test_notify_no_stopped_on_stop_to_stop() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier)
-    bridge._maybe_notify_stop(_snap(old_state="stop", state="stop"), {"id": "1"})
-    notifier.notify.assert_not_called()
-
-
-def test_notify_track_change_on_play() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier)
-    bridge._maybe_notify_track(
-        _snap(old_state="play", state="play",
-              same_song=False, new_pos_s=2.5),
-        {"xesam:title": "x"},
-    )
-    notifier.notify_track.assert_called_once()
-    args, _kwargs = notifier.notify_track.call_args
-    assert args[1] == "play"
-    assert args[2] == 2_500_000
-
-
-def test_notify_track_empty_meta_is_noop() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier)
-    bridge._maybe_notify_track(
-        _snap(old_state="play", state="play", same_song=False), {},
-    )
-    notifier.notify_track.assert_not_called()
-
-
-def test_notify_no_track_change_on_same_song() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier)
-    bridge._maybe_notify_track(
-        _snap(old_state="play", state="play", same_song=True), {"x": 1},
-    )
-    notifier.notify_track.assert_not_called()
-
-
-def test_notify_no_track_change_when_paused_without_flag() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier, notify_paused=False)
-    bridge._maybe_notify_track(
-        _snap(old_state="play", state="pause", same_song=False), {"x": 1},
-    )
-    notifier.notify_track.assert_not_called()
-
-
-def test_notify_track_change_when_paused_with_flag() -> None:
-    notifier = _fake_notifier()
-    bridge = _notif_bridge(notifier=notifier, notify_paused=True)
-    bridge._maybe_notify_track(
-        _snap(old_state="play", state="pause", same_song=False), {"x": 1},
-    )
-    notifier.notify_track.assert_called_once()

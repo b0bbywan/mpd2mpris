@@ -12,14 +12,9 @@ from mpdris2.cli import (
     _resolve_cover_backend,
     _resolve_music_dir,
     _resolve_mympd_uri,
-    _resolve_notifier_config,
-    _resolve_notify,
-    _resolve_notify_paused,
-    _resolve_notify_templates,
     build_parser,
     read_config,
 )
-from mpdris2.notify import NotifyTemplates
 
 
 def _ns(**overrides) -> argparse.Namespace:
@@ -77,69 +72,6 @@ def test_read_config_parses_ini(tmp_path: Path) -> None:
     assert cfg.get("Connection", "host") == "mpd.example"
     assert cfg.getint("Connection", "port") == 6600
     assert cfg.get("Library", "music_dir") == "/srv/music"
-
-
-# --- notify resolvers ------------------------------------------------------
-
-def test_resolve_notify_default_true() -> None:
-    assert _resolve_notify(configparser.ConfigParser()) is True
-
-
-def test_resolve_notify_explicit_false() -> None:
-    cfg = configparser.ConfigParser()
-    cfg.read_string("[Notify]\nnotify = False\n")
-    assert _resolve_notify(cfg) is False
-
-
-def test_resolve_notify_falls_back_to_bling() -> None:
-    cfg = configparser.ConfigParser()
-    cfg.read_string("[Bling]\nnotification = False\n")
-    assert _resolve_notify(cfg) is False
-
-
-def test_resolve_notify_paused_default_false() -> None:
-    assert _resolve_notify_paused(configparser.ConfigParser()) is False
-
-
-def test_resolve_notify_paused_explicit_true() -> None:
-    cfg = configparser.ConfigParser()
-    cfg.read_string("[Bling]\nnotify_paused = True\n")
-    assert _resolve_notify_paused(cfg) is True
-
-
-def test_resolve_notify_templates_defaults_blank() -> None:
-    t = _resolve_notify_templates(configparser.ConfigParser())
-    assert t == NotifyTemplates()
-
-
-def test_resolve_notify_templates_explicit() -> None:
-    cfg = configparser.ConfigParser()
-    cfg.read_string(
-        "[Notify]\n"
-        "summary = %title%\n"
-        "body = by %artist%\n"
-        "paused_summary = (paused) %title%\n"
-        "paused_body = was %artist%\n"
-    )
-    t = _resolve_notify_templates(cfg)
-    assert t.summary == "%title%"
-    assert t.body == "by %artist%"
-    assert t.paused_summary == "(paused) %title%"
-    assert t.paused_body == "was %artist%"
-
-
-def test_resolve_notifier_config_defaults() -> None:
-    nc = _resolve_notifier_config(configparser.ConfigParser())
-    assert nc.urgency == 1
-    assert nc.timeout == -1
-
-
-def test_resolve_notifier_config_explicit() -> None:
-    cfg = configparser.ConfigParser()
-    cfg.read_string("[Notify]\nurgency = 2\ntimeout = 5000\n")
-    nc = _resolve_notifier_config(cfg)
-    assert nc.urgency == 2
-    assert nc.timeout == 5000
 
 
 def test_read_config_no_argument_falls_back_to_xdg(tmp_path: Path, monkeypatch) -> None:
