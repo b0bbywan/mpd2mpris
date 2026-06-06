@@ -44,6 +44,34 @@ def first(val: object) -> str:
     return str(val)
 
 
+def split_title(title: str) -> tuple[str, str] | None:
+    """Web-radio ICY titles are usually ``Artist - Track``. Split on the
+    first `` - ``; ``None`` when there's no separator (jingles, promos,
+    bare station names) so callers never query a backend with junk."""
+    artist, sep, track = title.partition(" - ")
+    artist, track = artist.strip(), track.strip()
+    if not sep or not artist or not track:
+        return None
+    return artist, track
+
+
+_NORM = re.compile(r"[^a-z0-9]+")
+
+
+def normalize(s: str) -> str:
+    """Lowercase, collapse runs of non-alphanumerics to a single space and
+    trim — a coarse key for loose, punctuation-insensitive matching."""
+    return _NORM.sub(" ", s.lower()).strip()
+
+
+def artist_matches(query: str, candidate: str) -> bool:
+    """Loose containment match (via ``normalize``) — enough to confirm a
+    search hit is the right artist without over-rejecting. Empty never
+    matches."""
+    q, c = normalize(query), normalize(candidate)
+    return bool(q) and bool(c) and (q == c or q in c or c in q)
+
+
 def _parse_leading_int(s: str) -> int | None:
     m = re.match(r"^(\d+)", s)
     return int(m.group(1)) if m else None

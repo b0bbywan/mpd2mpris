@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from mpdris2.translate import (
+    artist_matches,
     first,
     loop_status_from,
     mpd_to_mpris,
@@ -16,6 +17,7 @@ from mpdris2.translate import (
     parse_volume,
     playback_status_from,
     song_url,
+    split_title,
 )
 
 
@@ -128,6 +130,36 @@ def test_first_handles_none() -> None:
 
 def test_first_handles_empty_list() -> None:
     assert first([]) == ""
+
+
+# --- split_title ----------------------------------------------------------
+
+@pytest.mark.parametrize("title,expected", [
+    ("Mato - 1980 Dub", ("Mato", "1980 Dub")),
+    ("  Mato  -  1980 Dub  ", ("Mato", "1980 Dub")),   # trimmed
+    ("Artist - Track - With Dash", ("Artist", "Track - With Dash")),  # first sep only
+    ("bare station name", None),                       # no separator
+    ("Artist - ", None),                               # empty track
+    (" - Track", None),                                # empty artist
+    ("", None),
+])
+def test_split_title(title: str, expected: tuple[str, str] | None) -> None:
+    assert split_title(title) == expected
+
+
+# --- artist_matches -------------------------------------------------------
+
+@pytest.mark.parametrize("query,candidate,expected", [
+    ("Bob Marley", "Bob Marley", True),
+    ("bob marley", "Bob  Marley!", True),              # case + punctuation folded
+    ("Bob Marley", "Bob Marley & The Wailers", True),  # query ⊂ candidate
+    ("Bob Marley & The Wailers", "Bob Marley", True),  # candidate ⊂ query
+    ("Bob Marley", "Peter Tosh", False),
+    ("", "Bob Marley", False),                         # empty never matches
+    ("Bob Marley", "", False),
+])
+def test_artist_matches(query: str, candidate: str, expected: bool) -> None:
+    assert artist_matches(query, candidate) is expected
 
 
 # --- playback_status_from -------------------------------------------------
