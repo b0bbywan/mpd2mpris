@@ -21,13 +21,14 @@ parsing/transferring for that guarantee.
    playlist instead. Tries the local FS regex first (no temp-file
    copy, picks up names like ``folder.jpg``), then falls back to MPD
    ``albumart``.
-5. XDG cover cache (``$XDG_CACHE_HOME/mpDris2/{artist}-{album}.jpg``).
-6. MusicBrainz / Cover Art Archive — last resort network lookup (see
-   ``mpdris2.musicbrainz``, optional dependency). The download is written
-   into the step-5 cache so the next play of the same album resolves
-   locally. For web radio (only a title, no album tag) the artist+album
-   are first recovered from MusicBrainz, then Deezer as a fallback, so
-   this path can key on them.
+5. Remote cover URL — MusicBrainz/CAA (canonical), then iTunes and
+   Deezer (broader coverage), each returning an image **URL** served
+   verbatim as ``mpris:artUrl`` (no download — lighter, and we link
+   rather than re-host). Memoised per (artist, album). For web radio
+   (only a title, no album tag) the artist+album are first recovered
+   from MusicBrainz, then Deezer as a fallback, so this path can key on
+   them.
+6. Web-radio station favicon URL — last resort for http(s):// streams.
 
 Requires MPD ≥ 0.22 (for ``readpicture``); the daemon won't error out
 on older servers but covers for non-standardly-named files won't work.
@@ -38,7 +39,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import re
 import tempfile
 import urllib.parse
@@ -52,13 +52,10 @@ from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
 
-# Cover-byte sources tried in order for a resolved (artist, album), first
-# hit wins: MusicBrainz/CAA (canonical), then the broader-coverage,
-# no-auth fallbacks.
+# Remote cover-URL sources tried in order for a resolved (artist, album),
+# first hit wins: MusicBrainz/CAA (canonical), then the broader-coverage,
+# no-auth fallbacks. Each exposes ``cover_url(artist, album) -> str | None``.
 _COVER_SOURCES = (musicbrainz, itunes, deezer)
-
-# User-side cover cache (XDG). Step 6 writes here; step 5 reads it.
-DEFAULT_COVER_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "mpDris2"
 
 DEFAULT_COVER_REGEX = re.compile(
     r"^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$",
@@ -134,7 +131,6 @@ class CoverFinderConfig:
 
     music_dir: Path | None = None
     cover_regex: re.Pattern[str] = DEFAULT_COVER_REGEX
-    cover_cache_dir: Path = DEFAULT_COVER_CACHE_DIR
     can_readpicture: bool = False
     can_albumart: bool = False
 
@@ -161,7 +157,6 @@ class CoverFinder:
         config = config or CoverFinderConfig()
         self._music_dir = config.music_dir
         self._cover_regex = config.cover_regex
-        self._cache_dir = config.cover_cache_dir
         self._can_readpicture = config.can_readpicture
         self._can_albumart = config.can_albumart
         self._temp_song_uri: str | None = None
@@ -169,7 +164,10 @@ class CoverFinder:
         # title -> (artist, album) | None, memoised so a web-radio title
         # resolves to a stable key across refreshes (and isn't re-queried).
         self._title_key_cache: dict[str, tuple[str, str] | None] = {}
-        # stream URL -> station favicon URL | None (step 7), memoised so the
+        # (artist, album) -> remote cover URL | None (step 5), memoised so an
+        # album played track-by-track isn't re-looked-up each time.
+        self._url_cache: dict[tuple[str, str], str | None] = {}
+        # stream URL -> station favicon URL | None (step 6), memoised so the
         # station isn't re-queried on every track.
         self._station_cache: dict[str, str | None] = {}
 
@@ -239,23 +237,17 @@ class CoverFinder:
             if cover:
                 return cover
 
-        # Resolve the (artist, album) cache key: straight from the tags, or
+        # Resolve the (artist, album) key: straight from the tags, or
         # — for web radio with only a title — recovered from MusicBrainz.
         artist, album = await self._resolve_key(req.mpd_meta)
 
-        # 5. Downloaded-covers cache (XDG). A repeat play of the same song
-        #    lands here once step 6 has saved it.
-        cache_path = self._cache_path(artist, album)
-        if cache_path is not None and cache_path.exists():
-            return cache_path.as_uri()
+        # 5. Remote cover URL (MusicBrainz/CAA, iTunes, Deezer), served
+        #    verbatim — MPRIS clients fetch the artUrl themselves.
+        cover = await self._remote_cover(artist, album)
+        if cover:
+            return cover
 
-        # 6. MusicBrainz / Cover Art Archive — download + cache.
-        if cache_path is not None:
-            cover = await self._download_cover(artist, album, cache_path)
-            if cover:
-                return cover
-
-        # 7. Web-radio station favicon URL — last resort for http(s)://
+        # 6. Web-radio station favicon URL — last resort for http(s)://
         #    streams (returned as-is; MPRIS clients fetch artUrl themselves).
         cover = await self._station_favicon(req.song_file)
         if cover:
@@ -392,28 +384,28 @@ class CoverFinder:
             )
         return self._title_key_cache[title] or (artist, album)
 
-    # --- step 5: downloaded-covers cache ----------------------------
-    def _cache_path(self, artist: str, album: str) -> Path | None:
-        """Cache file for an album, shared by step 5 (read) and step 6
-        (write); ``None`` when artist/album is missing."""
+    # --- step 5: remote cover URL -----------------------------------
+    async def _remote_cover(self, artist: str, album: str) -> str | None:
+        """First cover URL from MusicBrainz/iTunes/Deezer for an album,
+        served verbatim. Memoised per (artist, album); ``None`` when
+        artist/album is missing or no source has it."""
         if not artist or not album:
-            logger.debug("cover: no cache key (artist=%r album=%r)", artist, album)
+            logger.debug("cover: no remote key (artist=%r album=%r)", artist, album)
             return None
-        # ``/`` would escape ``_cache_dir`` (e.g. "AC/DC").
-        safe_name = f"{artist}-{album}.jpg".replace("/", "_")
-        return self._cache_dir / safe_name
+        key = (artist, album)
+        if key not in self._url_cache:
+            self._url_cache[key] = await self._lookup_cover_url(artist, album)
+        return self._url_cache[key]
 
-    # --- step 6: download a remote cover into the cache -------------
-    async def _download_cover(self, artist: str, album: str, cache_path: Path) -> str | None:
+    async def _lookup_cover_url(self, artist: str, album: str) -> str | None:
         for source in _COVER_SOURCES:
-            data = await source.fetch_cover(artist, album)
-            if data:
-                cover = await asyncio.to_thread(self._cache_download, cache_path, data)
-                if cover:
-                    return cover
+            url: str | None = await source.cover_url(artist, album)
+            if url:
+                logger.debug("cover: %s -> %s", source.__name__, url)
+                return url
         return None
 
-    # --- step 7: web-radio station favicon URL ----------------------
+    # --- step 6: web-radio station favicon URL ----------------------
     async def _station_favicon(self, stream_url: str) -> str | None:
         """Favicon URL of the station serving an http(s):// stream, memoised
         per stream URL. Returned verbatim — no download, MPRIS clients fetch
@@ -423,20 +415,6 @@ class CoverFinder:
         if stream_url not in self._station_cache:
             self._station_cache[stream_url] = await radiobrowser.station_icon(stream_url)
         return self._station_cache[stream_url]
-
-    def _cache_download(self, path: Path, data: bytes) -> str | None:
-        mime = _detect_mime(data)
-        if mime is None:
-            logger.warning("downloaded %d bytes of unrecognised image data; skipping", len(data))
-            return None
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-        except OSError as e:
-            logger.warning("cover: could not cache download to %s: %s", path, e)
-            return None
-        logger.debug("cover: cached cover at %s", path)
-        return path.as_uri()
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
