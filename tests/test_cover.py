@@ -459,6 +459,55 @@ async def test_station_favicon_returns_url_and_memoises(monkeypatch) -> None:
     assert calls == [stream]  # second call served from memo
 
 
+# --- _mympd_cover (step 7) -----------------------------------------------
+
+_WDB = "https://jcorporation.github.io/webradiodb/db/pics/stream.webp"
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_disabled_without_uri(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append((base, stream))
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder()  # no mympd_url
+    assert await cf._mympd_cover("http://stream") is None
+    assert calls == []  # not configured → never queried
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_skips_non_http(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append(stream)
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    assert await cf._mympd_cover("relative/track.flac") is None
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_returns_url_and_memoises(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append((base, stream))
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    stream = "http://absolut.example/coffee.mp3"
+    assert await cf._mympd_cover(stream) == _WDB
+    assert await cf._mympd_cover(stream) == _WDB
+    assert calls == [("http://host:8080", stream)]  # second call served from memo
+
+
 # --- _materialise + temp reuse via find() --------------------------------
 
 def test_materialise_writes_bytes_at_returned_uri() -> None:

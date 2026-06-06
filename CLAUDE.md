@@ -41,10 +41,11 @@ Flat package at `mpdris2/`:
 | `mpd_client.py` | `mpd.asyncio.MPDClient` wrapper: connect-with-backoff + capability probe |
 | `mpris.py` | `dbus_fast.ServiceInterface` classes: `MediaPlayer2` (root) + `MediaPlayer2Player` |
 | `translate.py` | Pure MPD song dict → MPRIS Metadata dict (`Variant`-wrapped); also `split_title` (shared ``Artist - Track`` ICY-title parser used by the web-radio resolvers). |
-| `cover.py` | 6-step async cover pipeline (MPD readpicture → filesystem regex → MPD albumart → CUE/cdda fallback → remote cover URL → web-radio station favicon). Steps 1–4 yield local/embedded covers (bytes → tempfile, or a `file://`). Step 5 delegates to `musicbrainz.py`/`itunes.py`/`deezer.py` for a remote image **URL** served verbatim (no download, no disk cache — lighter, and we link rather than re-host), memoised per (artist, album); iTunes/Deezer are opt-in (`[Cover]` section, off by default), MusicBrainz/CAA always runs. For web radio (title only) the artist+album are recovered from MusicBrainz first, then Deezer (broader catalogue) when enabled. Step 6 falls back to the station favicon URL (`radiobrowser.py`) for http(s):// streams. |
+| `cover.py` | 7-step async cover pipeline (MPD readpicture → filesystem regex → MPD albumart → CUE/cdda fallback → remote cover URL → web-radio station favicon → myMPD WebradioDB). Steps 1–4 yield local/embedded covers (bytes → tempfile, or a `file://`). Step 5 delegates to `musicbrainz.py`/`itunes.py`/`deezer.py` for a remote image **URL** served verbatim (no download, no disk cache — lighter, and we link rather than re-host), memoised per (artist, album); iTunes/Deezer are opt-in (`[Cover]` section, off by default), MusicBrainz/CAA always runs. For web radio (title only) the artist+album are recovered from MusicBrainz first, then Deezer (broader catalogue) when enabled. Step 6 falls back to the station favicon URL (`radiobrowser.py`) for http(s):// streams; step 7 is the opt-in myMPD WebradioDB cover (`mympd.py`, enabled via `[Cover] mympd_uri`). |
 | `musicbrainz.py` | Optional MusicBrainz / Cover Art Archive lookups (isolates the `musicbrainzngs` dep): `resolve_album(title)` (fielded recording search + artist/title validation, for web radio) and `cover_url(artist, album)` (release-group front-cover URL via the CAA image list — no image download). No-op when the dep is absent. |
 | `itunes.py` / `deezer.py` | No-auth, stdlib-only cover-art fallbacks (`cover_url(artist, album)` → image URL from the search JSON) tried after MusicBrainz/CAA when it has no image — CAA coverage is sparse for some content. **Opt-in, off by default** (`[Cover] itunes` / `deezer`). `deezer.py` also has `resolve_album(title)` (track search, web-radio key recovery after MusicBrainz; gated on the `deezer` opt-in). |
 | `radiobrowser.py` | No-auth, stdlib-only last-resort for http(s):// web-radio streams: `station_icon(stream_url)` returns the station's favicon **URL** (cover.py step 6). Returned verbatim as `mpris:artUrl` — no download. |
+| `mympd.py` | No-auth, stdlib-only opt-in fallback (cover.py step 7, `[Cover] mympd_uri`): `cover_url(base_url, stream_url)` POSTs `MYMPD_API_WEBRADIODB_RADIO_GET_BY_URI` to a myMPD instance and returns the WebradioDB `Image` **URL** verbatim — no download. No-op when `mympd_uri` is unset. |
 | `notify.py` | Desktop notifications via `org.freedesktop.Notifications` over dbus-fast |
 | `locale/` | Compiled `.mo` files (built from `po/*.po`, shipped as package data) |
 
@@ -67,7 +68,7 @@ User config at `~/.config/mpDris2/mpDris2.conf` (INI), falling back to `/etc/mpD
 Sections in current use:
 - `[Connection]` — `host`, `port`, `password`
 - `[Library]` — `music_dir`, `cover_regex`
-- `[Cover]` — `itunes`, `deezer` (bool, both default off): opt-in remote cover-URL fallbacks (cover.py step 5)
+- `[Cover]` — `itunes`, `deezer` (bool, both default off): opt-in remote cover-URL fallbacks (cover.py step 5); `mympd_uri` (str, unset = off): myMPD base URL for the WebradioDB fallback (cover.py step 7)
 - `[Notify]` — `notify` (bool)
 
 CLI overrides config: `-H`/`--host`, `-p`/`--port`, `--music-dir`, `--config`, `--use-journal`, `--no-reconnect`, `-v`/`--verbose`.
