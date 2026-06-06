@@ -16,10 +16,26 @@ from mpdris2.cover import (
     CoverFinder,
     CoverFinderConfig,
     SongLookup,
+    _BoundedCache,
     _detect_mime,
     _has_uri_scheme,
     _is_virtual_cue_track,
 )
+
+# --- _BoundedCache --------------------------------------------------------
+
+def test_bounded_cache_evicts_oldest_over_capacity() -> None:
+    c = _BoundedCache(maxsize=2)
+    c["a"], c["b"] = 1, 2
+    c["c"] = 3  # evicts "a", the oldest
+    assert "a" not in c
+    assert dict(c) == {"b": 2, "c": 3}
+
+
+def test_bounded_cache_keeps_none_values() -> None:
+    c = _BoundedCache(maxsize=2)
+    c["a"] = None
+    assert "a" in c and c["a"] is None
 
 # --- _detect_mime ---------------------------------------------------------
 
