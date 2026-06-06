@@ -42,6 +42,7 @@ import logging
 import re
 import tempfile
 import urllib.parse
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,6 +150,26 @@ class SongLookup:
     last_loaded_playlist: str = ""
 
 
+# Per-cache entry cap. Covers/keys are cheap to re-resolve (one network
+# call), so a long-running daemon zapping web radios needn't hoard them.
+_CACHE_MAX = 256
+
+
+class _BoundedCache(OrderedDict):
+    """Insertion-ordered dict capped at ``maxsize`` entries, evicting the
+    oldest on overflow. Holds ``None`` values (negative cache), so callers
+    probe membership with ``in``."""
+
+    def __init__(self, maxsize: int = _CACHE_MAX) -> None:
+        super().__init__()
+        self._maxsize = maxsize
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        super().__setitem__(key, value)
+        if len(self) > self._maxsize:
+            self.popitem(last=False)
+
+
 class CoverFinder:
     """Owns the per-track temp file for embedded covers + the MPD
     capability flags (``readpicture`` / ``albumart``)."""
@@ -163,13 +184,13 @@ class CoverFinder:
         self._temp_cover: IO[bytes] | None = None
         # title -> (artist, album) | None, memoised so a web-radio title
         # resolves to a stable key across refreshes (and isn't re-queried).
-        self._title_key_cache: dict[str, tuple[str, str] | None] = {}
+        self._title_key_cache: dict[str, tuple[str, str] | None] = _BoundedCache()
         # (artist, album) -> remote cover URL | None (step 5), memoised so an
         # album played track-by-track isn't re-looked-up each time.
-        self._url_cache: dict[tuple[str, str], str | None] = {}
+        self._url_cache: dict[tuple[str, str], str | None] = _BoundedCache()
         # stream URL -> station favicon URL | None (step 6), memoised so the
         # station isn't re-queried on every track.
-        self._station_cache: dict[str, str | None] = {}
+        self._station_cache: dict[str, str | None] = _BoundedCache()
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
