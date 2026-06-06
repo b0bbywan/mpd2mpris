@@ -1,5 +1,5 @@
 # Dev / CI helpers. `mpdris2/__init__.py` is the version source of truth;
-# this Makefile drives lint / test / build / deb / i18n and keeps the
+# this Makefile drives lint / test / build / deb and keeps the
 # debian/changelog in sync with the Python version, no logic duplicated
 # in the workflow YAML.
 
@@ -7,8 +7,7 @@ PYTHON  ?= python3
 VERSION := $(PYTHON) scripts/version.py
 
 .PHONY: version deb-version check-tag sync-deb \
-        lint lint-ruff lint-mypy test build deb clean \
-        i18n-extract i18n-compile
+        lint lint-ruff lint-mypy test build deb clean
 
 # --- version helpers ---------------------------------------------------
 
@@ -60,23 +59,4 @@ deb:
 	dpkg-buildpackage -b -us -uc
 
 clean:
-	rm -rf build/ dist/ *.egg-info mpdris2.egg-info mpdris2/locale/
-
-# --- i18n --------------------------------------------------------------
-
-# Refresh the .pot template from current source.
-i18n-extract:
-	pybabel extract -F babel.cfg \
-		--project=mpDris2 \
-		--version="$$($(VERSION))" \
-		--copyright-holder="Mathieu Réquillart" \
-		--msgid-bugs-address=https://github.com/b0bbywan/mpDris2/issues \
-		-o po/mpdris2.pot mpdris2/
-
-# Compile .po files into the package's runtime locale tree.
-i18n-compile:
-	@for po in po/*.po; do \
-		lang=$$(basename $$po .po); \
-		mkdir -p mpdris2/locale/$$lang/LC_MESSAGES; \
-		msgfmt $$po -o mpdris2/locale/$$lang/LC_MESSAGES/mpdris2.mo; \
-	done
+	rm -rf build/ dist/ *.egg-info mpdris2.egg-info
