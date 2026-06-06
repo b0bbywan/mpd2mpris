@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import configparser
 import contextlib
-import gettext
 import logging
 import os
 import re
@@ -29,13 +28,6 @@ from mpdris2.mpd_client import is_unix_socket
 logger = logging.getLogger("mpdris2")
 
 BUS_CONNECT_TIMEOUT = 10.0
-
-# Bind the message catalog so ``from gettext import gettext as _``
-# lookups hit our installed .mo files. Catalogs ship as package data
-# under ``mpdris2/locale/<lang>/LC_MESSAGES/mpdris2.mo``.
-_LOCALE_DIR = Path(__file__).resolve().parent / "locale"
-gettext.bindtextdomain("mpdris2", str(_LOCALE_DIR))
-gettext.textdomain("mpdris2")
 
 CONFIG_PATHS = [
     Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
