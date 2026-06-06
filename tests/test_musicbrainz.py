@@ -9,7 +9,7 @@ import pytest
 
 from mpdris2 import musicbrainz
 
-_PNG = b"\x89PNG\r\n\x1a\n" + b"imagedata"
+_COVER = "https://coverartarchive.org/release/rel-1/front-500.jpg"
 
 
 class _FakeMB:
@@ -19,12 +19,12 @@ class _FakeMB:
     def __init__(
         self,
         rg_id: str | None = None,
-        image: bytes | None = None,
+        cover: str | None = None,
         recordings: list[dict] | None = None,
         groups: list[dict] | None = None,
     ) -> None:
         self._rg_id = rg_id
-        self._image = image
+        self._cover = cover
         self._recordings = recordings or []
         self._groups = groups or []
         self.recording_query: dict | None = None
@@ -41,11 +41,11 @@ class _FakeMB:
         self.group_query = kwargs
         return {"release-group-list": self._groups}
 
-    def get_release_group_image_front(self, rg_id: str, size: str | None = None) -> bytes:
+    def get_release_group_image_list(self, rg_id: str) -> dict:
         assert rg_id == self._rg_id
-        if self._image is None:
-            raise Exception("404 no front cover")  # mirrors ResponseError
-        return self._image
+        if self._cover is None:
+            return {"images": []}  # no front cover for this release group
+        return {"images": [{"front": True, "thumbnails": {"500": self._cover}, "image": self._cover}]}
 
 
 def _group(title: str, primary: str = "Album", secondary: list[str] | None = None, rg_id: str = "rg-1") -> dict:
@@ -143,29 +143,29 @@ async def test_resolve_album_skips_hit_without_release(monkeypatch) -> None:
     assert await musicbrainz.resolve_album("Mato - Dub") is None
 
 
-# --- fetch_cover ----------------------------------------------------------
+# --- cover_url ------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fetch_cover_disabled_without_lib(monkeypatch) -> None:
+async def test_cover_url_disabled_without_lib(monkeypatch) -> None:
     monkeypatch.setattr(musicbrainz, "musicbrainzngs", None)
-    assert await musicbrainz.fetch_cover("A", "B") is None
+    assert await musicbrainz.cover_url("A", "B") is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_returns_image(monkeypatch) -> None:
-    fake = _FakeMB("rg-1", _PNG, groups=[_group("B")])
+async def test_cover_url_returns_url(monkeypatch) -> None:
+    fake = _FakeMB("rg-1", _COVER, groups=[_group("B")])
     monkeypatch.setattr(musicbrainz, "musicbrainzngs", fake)
-    assert await musicbrainz.fetch_cover("A", "B") == _PNG
+    assert await musicbrainz.cover_url("A", "B") == _COVER
     assert fake.group_query == {"artist": "A", "releasegroup": "B", "limit": 5}
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_no_group(monkeypatch) -> None:
+async def test_cover_url_no_group(monkeypatch) -> None:
     monkeypatch.setattr(musicbrainz, "musicbrainzngs", _FakeMB(groups=[]))
-    assert await musicbrainz.fetch_cover("A", "B") is None
+    assert await musicbrainz.cover_url("A", "B") is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_no_front_image(monkeypatch) -> None:
+async def test_cover_url_no_front_image(monkeypatch) -> None:
     monkeypatch.setattr(musicbrainz, "musicbrainzngs", _FakeMB("rg-1", None, groups=[_group("B")]))
-    assert await musicbrainz.fetch_cover("A", "B") is None
+    assert await musicbrainz.cover_url("A", "B") is None

@@ -111,14 +111,15 @@ async def resolve_album(title: str) -> tuple[str, str] | None:
     return await asyncio.to_thread(_resolve_blocking, *parsed)
 
 
-async def fetch_cover(artist: str, album: str) -> bytes | None:
-    """Download an album's front cover. ``None`` without the dependency
-    or when nothing matches."""
+async def cover_url(artist: str, album: str) -> str | None:
+    """Front-cover URL from the Cover Art Archive. ``None`` without the
+    dependency or when nothing matches — the CAA image list both confirms
+    the cover exists and yields its URL, no image download."""
     if musicbrainzngs is None:
         logger.debug("musicbrainz: skipped (not installed)")
         return None
     logger.debug("musicbrainz: cover for %r / %r", artist, album)
-    return await asyncio.to_thread(_fetch_blocking, artist, album)
+    return await asyncio.to_thread(_url_blocking, artist, album)
 
 
 def _resolve_blocking(q_artist: str, q_track: str) -> tuple[str, str] | None:
@@ -153,7 +154,7 @@ def _resolve_blocking(q_artist: str, q_track: str) -> tuple[str, str] | None:
         return None
 
 
-def _fetch_blocking(artist: str, album: str) -> bytes | None:
+def _url_blocking(artist: str, album: str) -> str | None:
     try:
         _ensure_useragent()
         result = musicbrainzngs.search_release_groups(artist=artist, releasegroup=album, limit=_SEARCH_LIMIT)
@@ -161,7 +162,14 @@ def _fetch_blocking(artist: str, album: str) -> bytes | None:
         if rg is None:
             logger.debug("musicbrainz: no release group for %r / %r", artist, album)
             return None
-        return bytes(musicbrainzngs.get_release_group_image_front(rg["id"], size=_IMAGE_SIZE))
+        images = musicbrainzngs.get_release_group_image_list(rg["id"]).get("images") or []
+        for img in images:
+            if img.get("front"):
+                url = (img.get("thumbnails") or {}).get(_IMAGE_SIZE) or img.get("image")
+                if url:
+                    return str(url)
+        logger.debug("musicbrainz: no front cover for %r / %r", artist, album)
+        return None
     except Exception as e:
         # ResponseError carries the HTTP status in ``.cause`` — surface 404
         # ("no cover art", common and harmless) distinctly from anything
