@@ -363,6 +363,26 @@ async def test_resolve_key_memoises_negative(monkeypatch) -> None:
     assert calls == ["-- AUTOPROMO - Twittos"]  # negative result memoised too
 
 
+@pytest.mark.asyncio
+async def test_resolve_key_not_cached_on_transient_error(monkeypatch) -> None:
+    # MusicBrainz errors on the first resolve, succeeds on the second: the
+    # failure must not be memoised, so the retry recovers the key.
+    calls: list[str] = []
+
+    async def _resolve(title: str) -> tuple[str, str]:
+        calls.append(title)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return ("Mato", "Summer Dub")
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _resolve)
+    cf = CoverFinder()
+    meta = {"title": "Mato - 1980 Dub"}
+    assert await cf._resolve_key(meta) == ("", "")  # errored → falls back, not cached
+    assert await cf._resolve_key(meta) == ("Mato", "Summer Dub")  # retried, resolves
+    assert calls == ["Mato - 1980 Dub", "Mato - 1980 Dub"]
+
+
 def _patch_sources(monkeypatch, mb=None, it=None, dz=None) -> None:
     monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _async_return(mb))
     monkeypatch.setattr("mpdris2.cover.itunes.cover_url", _async_return(it))
@@ -427,6 +447,41 @@ async def test_remote_cover_memoises(monkeypatch) -> None:
     assert calls == [("A", "B")]  # second served from memo
 
 
+@pytest.mark.asyncio
+async def test_remote_cover_not_cached_on_transient_error(monkeypatch) -> None:
+    # A source error must not poison the cache: the first lookup raises, the
+    # second succeeds and yields the URL (i.e. it was retried, not cached None).
+    calls: list = []
+
+    async def _mb(artist: str, album: str) -> str:
+        calls.append((artist, album))
+        if len(calls) == 1:
+            raise OSError("transient")
+        return _CAA
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None  # errored → not cached
+    assert await cf._remote_cover("A", "B") == _CAA  # retried, now resolves
+    assert calls == [("A", "B"), ("A", "B")]
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_caches_confirmed_miss(monkeypatch) -> None:
+    # A clean all-source miss IS cached (no error) — not re-queried.
+    calls: list = []
+
+    async def _mb(artist: str, album: str) -> None:
+        calls.append((artist, album))
+        return None
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None
+    assert await cf._remote_cover("A", "B") is None
+    assert calls == [("A", "B")]  # confirmed miss memoised
+
+
 # --- _station_favicon (step 6) -------------------------------------------
 
 @pytest.mark.asyncio
@@ -457,6 +512,23 @@ async def test_station_favicon_returns_url_and_memoises(monkeypatch) -> None:
     assert await cf._station_favicon(stream) == "https://x/favicon.ico"
     assert await cf._station_favicon(stream) == "https://x/favicon.ico"
     assert calls == [stream]  # second call served from memo
+
+
+@pytest.mark.asyncio
+async def test_station_favicon_not_cached_on_transient_error(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _icon(url: str) -> str:
+        calls.append(url)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return "https://x/favicon.ico"
+
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    cf = CoverFinder()
+    stream = "http://hd.example.info/reggae-192.mp3"
+    assert await cf._station_favicon(stream) is None  # errored → not cached
+    assert await cf._station_favicon(stream) == "https://x/favicon.ico"  # retried
 
 
 # --- _mympd_cover (step 7) -----------------------------------------------
@@ -506,6 +578,23 @@ async def test_mympd_cover_returns_url_and_memoises(monkeypatch) -> None:
     assert await cf._mympd_cover(stream) == _WDB
     assert await cf._mympd_cover(stream) == _WDB
     assert calls == [("http://host:8080", stream)]  # second call served from memo
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_not_cached_on_transient_error(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append(stream)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    stream = "http://absolut.example/coffee.mp3"
+    assert await cf._mympd_cover(stream) is None  # errored → not cached
+    assert await cf._mympd_cover(stream) == _WDB  # retried
 
 
 # --- _materialise + temp reuse via find() --------------------------------
