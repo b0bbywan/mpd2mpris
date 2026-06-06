@@ -44,9 +44,9 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates git make gettext \
+            ca-certificates git make \
             build-essential debhelper dh-python pybuild-plugin-pyproject \
-            python3 python3-setuptools python3-babel devscripts
+            python3 python3-setuptools devscripts
 
       - uses: actions/checkout@v6
         with:
@@ -82,12 +82,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gettext
-          pip install build
-      - name: Compile .mo catalogs
-        run: make i18n-compile
+        run: pip install build
       - name: Build sdist
         run: python -m build --sdist
       - uses: actions/upload-artifact@v6
