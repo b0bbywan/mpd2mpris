@@ -21,10 +21,11 @@ parsing/transferring for that guarantee.
    playlist instead. Tries the local FS regex first (no temp-file
    copy, picks up names like ``folder.jpg``), then falls back to MPD
    ``albumart``.
-5. Remote cover URL — MusicBrainz/CAA (canonical), then iTunes and
-   Deezer (broader coverage), each returning an image **URL** served
-   verbatim as ``mpris:artUrl`` (no download — lighter, and we link
-   rather than re-host). Memoised per (artist, album). For web radio
+5. Remote cover URL — MusicBrainz/CAA (canonical), then the opt-in
+   iTunes and Deezer fallbacks (broader coverage, off by default), each
+   returning an image **URL** served verbatim as ``mpris:artUrl`` (no
+   download — lighter, and we link rather than re-host). Memoised per
+   (artist, album). For web radio
    (only a title, no album tag) the artist+album are first recovered
    from MusicBrainz, then Deezer as a fallback, so this path can key on
    them.
@@ -52,11 +53,6 @@ from mpdris2 import deezer, itunes, musicbrainz, radiobrowser
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
-
-# Remote cover-URL sources tried in order for a resolved (artist, album),
-# first hit wins: MusicBrainz/CAA (canonical), then the broader-coverage,
-# no-auth fallbacks. Each exposes ``cover_url(artist, album) -> str | None``.
-_COVER_SOURCES = (musicbrainz, itunes, deezer)
 
 DEFAULT_COVER_REGEX = re.compile(
     r"^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$",
@@ -134,6 +130,11 @@ class CoverFinderConfig:
     cover_regex: re.Pattern[str] = DEFAULT_COVER_REGEX
     can_readpicture: bool = False
     can_albumart: bool = False
+    # Opt-in remote cover fallbacks (step 5), off by default. MusicBrainz/CAA
+    # is always tried first; these widen coverage at the cost of extra
+    # third-party queries.
+    use_itunes: bool = False
+    use_deezer: bool = False
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,16 @@ class CoverFinder:
         self._cover_regex = config.cover_regex
         self._can_readpicture = config.can_readpicture
         self._can_albumart = config.can_albumart
+        self._use_deezer = config.use_deezer
+        # Remote cover-URL sources tried in order, first hit wins:
+        # MusicBrainz/CAA (canonical, always on), then the opt-in,
+        # broader-coverage, no-auth fallbacks. Each exposes
+        # ``cover_url(artist, album) -> str | None``.
+        self._cover_sources: list[Any] = [musicbrainz]
+        if config.use_itunes:
+            self._cover_sources.append(itunes)
+        if config.use_deezer:
+            self._cover_sources.append(deezer)
         self._temp_song_uri: str | None = None
         self._temp_cover: IO[bytes] | None = None
         # title -> (artist, album) | None, memoised so a web-radio title
@@ -388,10 +399,10 @@ class CoverFinder:
     async def _resolve_key(self, mpd_meta: dict) -> tuple[str, str]:
         """Return the (artist, album) the cache and cover lookups key on.
         From the tags when present; otherwise — web radio with only a
-        title — recovered from MusicBrainz, then Deezer (broader catalogue)
-        as a fallback, memoised per title. The memo is what makes a repeat
-        play resolve to the same key (so the disk cache hits) instead of
-        re-querying non-deterministically."""
+        title — recovered from MusicBrainz, then Deezer (broader catalogue,
+        when enabled) as a fallback, memoised per title. The memo is what
+        makes a repeat play resolve to the same key (so the disk cache hits)
+        instead of re-querying non-deterministically."""
         artist = first(mpd_meta.get("artist"))
         album = first(mpd_meta.get("album"))
         if artist and album:
@@ -400,9 +411,10 @@ class CoverFinder:
         if not title:
             return artist, album
         if title not in self._title_key_cache:
-            self._title_key_cache[title] = (
-                await musicbrainz.resolve_album(title) or await deezer.resolve_album(title)
-            )
+            key = await musicbrainz.resolve_album(title)
+            if key is None and self._use_deezer:
+                key = await deezer.resolve_album(title)
+            self._title_key_cache[title] = key
         return self._title_key_cache[title] or (artist, album)
 
     # --- step 5: remote cover URL -----------------------------------
@@ -419,7 +431,7 @@ class CoverFinder:
         return self._url_cache[key]
 
     async def _lookup_cover_url(self, artist: str, album: str) -> str | None:
-        for source in _COVER_SOURCES:
+        for source in self._cover_sources:
             url: str | None = await source.cover_url(artist, album)
             if url:
                 logger.debug("cover: %s -> %s", source.__name__, url)
