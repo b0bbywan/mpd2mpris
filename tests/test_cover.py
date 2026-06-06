@@ -314,8 +314,20 @@ async def test_resolve_key_falls_back_to_deezer(monkeypatch) -> None:
     # MusicBrainz can't resolve the title; Deezer (broader catalogue) can.
     monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _async_return(None))
     monkeypatch.setattr("mpdris2.cover.deezer.resolve_album", _async_return(("Dan Bawaka.Z", "Terre Mère")))
-    cf = CoverFinder()
+    cf = CoverFinder(CoverFinderConfig(use_deezer=True))
     assert await cf._resolve_key({"title": "Dan Bawaka.z - Rasta Dub"}) == ("Dan Bawaka.Z", "Terre Mère")
+
+
+@pytest.mark.asyncio
+async def test_resolve_key_skips_deezer_when_disabled(monkeypatch) -> None:
+    # Deezer off (default): MB miss is not retried against Deezer.
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.resolve_album", _async_return(None))
+    monkeypatch.setattr(
+        "mpdris2.cover.deezer.resolve_album",
+        _async_return(("Dan Bawaka.Z", "Terre Mère")),
+    )
+    cf = CoverFinder()
+    assert await cf._resolve_key({"title": "Dan Bawaka.z - Rasta Dub"}) == ("", "")
 
 
 @pytest.mark.asyncio
@@ -370,10 +382,18 @@ async def test_remote_cover_returns_first_url(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_remote_cover_falls_back_to_next_source(monkeypatch) -> None:
-    # MusicBrainz/CAA has nothing; iTunes provides the URL.
+    # MusicBrainz/CAA has nothing; iTunes (opt-in) provides the URL.
     _patch_sources(monkeypatch, mb=None, it=_ITU)
-    cf = CoverFinder()
+    cf = CoverFinder(CoverFinderConfig(use_itunes=True))
     assert await cf._remote_cover("A", "B") == _ITU
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_skips_disabled_fallbacks(monkeypatch) -> None:
+    # iTunes/Deezer off (default): MB miss isn't widened to them.
+    _patch_sources(monkeypatch, mb=None, it=_ITU, dz=_ITU)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None
 
 
 @pytest.mark.asyncio

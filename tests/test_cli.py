@@ -9,6 +9,7 @@ from pathlib import Path
 
 from mpdris2.cli import (
     _resolve_cdprev,
+    _resolve_cover_backend,
     _resolve_music_dir,
     _resolve_notifier_config,
     _resolve_notify,
@@ -220,3 +221,18 @@ def test_resolve_cdprev_explicit_true() -> None:
     cfg = configparser.ConfigParser()
     cfg.read_string("[Bling]\ncdprev = True\n")
     assert _resolve_cdprev(cfg) is True
+
+
+# --- _resolve_cover_backend ------------------------------------------------
+
+def test_resolve_cover_backend_default_false() -> None:
+    cfg = configparser.ConfigParser()
+    assert _resolve_cover_backend(cfg, "itunes") is False
+    assert _resolve_cover_backend(cfg, "deezer") is False
+
+
+def test_resolve_cover_backend_explicit_true() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[Cover]\nitunes = True\ndeezer = True\n")
+    assert _resolve_cover_backend(cfg, "itunes") is True
+    assert _resolve_cover_backend(cfg, "deezer") is True
