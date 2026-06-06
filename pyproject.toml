@@ -21,7 +21,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "babel", "build"]
+dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "build"]
 # MusicBrainz cover lookup (cover.py step 6): the recording search and its
 # fuzzy artist/title validation go together.
 cover = ["musicbrainzngs>=0.7"]
@@ -38,9 +38,6 @@ version = {attr = "mpdris2.__version__"}
 [tool.setuptools.packages.find]
 include = ["mpdris2*"]
 exclude = ["tests*"]
-
-[tool.setuptools.package-data]
-mpdris2 = ["locale/*/LC_MESSAGES/*.mo"]
 
 [tool.pytest.ini_options]
 # Add the repo root so `pytest -q` (not via `python -m pytest`) can
