@@ -1,5 +1,6 @@
 """Unit tests for the Deezer cover-art fallback. ``_get`` (the only
-network touch-point) is monkeypatched; nothing hits the network."""
+network touch-point — the search call) is monkeypatched; nothing hits
+the network. ``cover_url`` returns the cover URL, no image download."""
 
 from __future__ import annotations
 
@@ -8,8 +9,6 @@ import json
 import pytest
 
 from mpdris2 import deezer
-
-_PNG = b"\x89PNG\r\n\x1a\n" + b"img"
 
 
 def _router(mapping: dict):
@@ -31,32 +30,31 @@ def _search(artist: str, album: str, cover: str | None) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_returns_image(monkeypatch) -> None:
+async def test_cover_url_returns_url(monkeypatch) -> None:
     monkeypatch.setattr(deezer, "_get", _router({
-        "api.deezer.com/search": _search("A", "B", "https://cdn/cover.jpg"),
-        "cdn/cover.jpg": _PNG,
+        "api.deezer.com/search/album": _search("A", "B", "https://cdn/cover.jpg"),
     }))
-    assert await deezer.fetch_cover("A", "B") == _PNG
+    assert await deezer.cover_url("A", "B") == "https://cdn/cover.jpg"
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_artist_mismatch(monkeypatch) -> None:
+async def test_cover_url_artist_mismatch(monkeypatch) -> None:
     monkeypatch.setattr(deezer, "_get", _router({
-        "api.deezer.com/search": _search("Someone Else", "B", "https://cdn/cover.jpg"),
+        "api.deezer.com/search/album": _search("Someone Else", "B", "https://cdn/cover.jpg"),
     }))
-    assert await deezer.fetch_cover("A", "B") is None
+    assert await deezer.cover_url("A", "B") is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_no_results(monkeypatch) -> None:
-    monkeypatch.setattr(deezer, "_get", _router({"api.deezer.com/search": b'{"data": []}'}))
-    assert await deezer.fetch_cover("A", "B") is None
+async def test_cover_url_no_results(monkeypatch) -> None:
+    monkeypatch.setattr(deezer, "_get", _router({"api.deezer.com/search/album": b'{"data": []}'}))
+    assert await deezer.cover_url("A", "B") is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_cover_network_error(monkeypatch) -> None:
-    monkeypatch.setattr(deezer, "_get", _router({"api.deezer.com/search": OSError("boom")}))
-    assert await deezer.fetch_cover("A", "B") is None
+async def test_cover_url_network_error(monkeypatch) -> None:
+    monkeypatch.setattr(deezer, "_get", _router({"api.deezer.com/search/album": OSError("boom")}))
+    assert await deezer.cover_url("A", "B") is None
 
 
 def _track(artist: str, track: str, album: str) -> bytes:

@@ -5,7 +5,8 @@ API has much broader coverage and needs no authentication. Used as a
 fallback after ``mpdris2.musicbrainz`` when CAA has no image. Two entry
 points, both async (the urllib calls run in a worker thread):
 
-* ``fetch_cover``   — download an album's cover bytes.
+* ``cover_url``     — an album's cover **URL** (served verbatim as
+  ``mpris:artUrl`` — no download).
 * ``resolve_album`` — recover (artist, album) from a free-form web-radio
   title, for the cases MusicBrainz can't resolve.
 """
@@ -48,11 +49,11 @@ def _get(url: str) -> bytes:
         return bytes(resp.read())
 
 
-async def fetch_cover(artist: str, album: str) -> bytes | None:
-    """Download an album's cover from Deezer, or ``None`` when nothing
-    matches the artist."""
+async def cover_url(artist: str, album: str) -> str | None:
+    """Cover URL for an album from Deezer, or ``None`` when nothing
+    matches the artist. The search hit confirms the cover exists."""
     logger.debug("deezer: cover for %r / %r", artist, album)
-    return await asyncio.to_thread(_fetch_blocking, artist, album)
+    return await asyncio.to_thread(_url_blocking, artist, album)
 
 
 async def resolve_album(title: str) -> tuple[str, str] | None:
@@ -68,7 +69,7 @@ async def resolve_album(title: str) -> tuple[str, str] | None:
     return await asyncio.to_thread(_resolve_blocking, *parsed)
 
 
-def _fetch_blocking(artist: str, album: str) -> bytes | None:
+def _url_blocking(artist: str, album: str) -> str | None:
     try:
         q = f'artist:"{artist}" album:"{album}"'
         url = f"{_SEARCH_URL}?{urllib.parse.urlencode({'q': q, 'limit': 1})}"
@@ -80,11 +81,11 @@ def _fetch_blocking(artist: str, album: str) -> bytes | None:
         if not _artist_matches(artist, top.get("artist", {}).get("name", "")):
             logger.debug("deezer: artist mismatch for %r / %r", artist, album)
             return None
-        cover_url = top.get(_COVER_FIELD) or top.get("cover_xl")
-        if not cover_url:
+        cover = top.get(_COVER_FIELD) or top.get("cover_xl")
+        if not cover:
             logger.debug("deezer: no cover url for %r / %r", artist, album)
             return None
-        return _get(cover_url)
+        return str(cover)
     except Exception as e:
         logger.debug("deezer: lookup for %r / %r failed: %r", artist, album, e)
         return None
