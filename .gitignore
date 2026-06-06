@@ -8,7 +8,6 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-mpdris2/locale/
 
 # debhelper / dpkg-buildpackage artifacts
 debian/.debhelper/
