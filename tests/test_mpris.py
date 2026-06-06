@@ -22,7 +22,6 @@ from mpdris2.mpris import MediaPlayer2, MediaPlayer2Player
 def test_root_identity() -> None:
     root = MediaPlayer2()
     assert root.Identity == "Music Player Daemon"
-    assert root.DesktopEntry == "mpdris2"
     assert root.CanQuit is False
     assert root.CanRaise is False
     assert root.HasTrackList is False

@@ -33,7 +33,6 @@ BUS_NAME = f"{MEDIA_PLAYER_IFACE}.mpd"
 PLAYER_IFACE = f"{MEDIA_PLAYER_IFACE}.Player"
 
 IDENTITY = "Music Player Daemon"
-DESKTOP_ENTRY = "mpdris2"
 
 VALID_PLAYBACK_STATUS = {"Playing", "Paused", "Stopped"}
 VALID_LOOP_STATUS = {"None", "Track", "Playlist"}
@@ -71,9 +70,8 @@ class MediaPlayer2(ServiceInterface):
     def Identity(self) -> "s":  # noqa: N802
         return IDENTITY
 
-    @dbus_property(access=PropertyAccess.READ)
-    def DesktopEntry(self) -> "s":  # noqa: N802
-        return DESKTOP_ENTRY
+    # No DesktopEntry property: we no longer ship a ``mpdris2.desktop``
+    # (D-Bus activation handles launch), so advertising one would dangle.
 
     @dbus_property(access=PropertyAccess.READ)
     def SupportedUriSchemes(self) -> "as":  # noqa: N802
