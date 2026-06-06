@@ -2,8 +2,9 @@
 
 Cover Art Archive is sparse for a lot of content; Apple's iTunes Search
 API has broad coverage and needs no authentication. Used as a fallback
-after ``mpdris2.musicbrainz``. One entry point, ``fetch_cover``; async
-(the urllib calls run in a worker thread).
+after ``mpdris2.musicbrainz``. One entry point, ``cover_url``, which
+returns the artwork **URL** (served verbatim as ``mpris:artUrl`` — no
+download); async (the urllib search call runs in a worker thread).
 """
 
 from __future__ import annotations
@@ -42,14 +43,14 @@ def _get(url: str) -> bytes:
         return bytes(resp.read())
 
 
-async def fetch_cover(artist: str, album: str) -> bytes | None:
-    """Download an album's cover from iTunes, or ``None`` when nothing
-    matches the artist."""
+async def cover_url(artist: str, album: str) -> str | None:
+    """Artwork URL for an album from iTunes, or ``None`` when nothing
+    matches the artist. The search hit confirms the artwork exists."""
     logger.debug("itunes: cover for %r / %r", artist, album)
-    return await asyncio.to_thread(_fetch_blocking, artist, album)
+    return await asyncio.to_thread(_url_blocking, artist, album)
 
 
-def _fetch_blocking(artist: str, album: str) -> bytes | None:
+def _url_blocking(artist: str, album: str) -> str | None:
     try:
         params = {"term": f"{artist} {album}", "entity": "album", "limit": 1}
         url = f"{_SEARCH_URL}?{urllib.parse.urlencode(params)}"
@@ -65,7 +66,7 @@ def _fetch_blocking(artist: str, album: str) -> bytes | None:
         if not art:
             logger.debug("itunes: no artwork url for %r / %r", artist, album)
             return None
-        return _get(art.replace("100x100", _ART_SIZE))
+        return str(art).replace("100x100", _ART_SIZE)
     except Exception as e:
         logger.debug("itunes: lookup for %r / %r failed: %r", artist, album, e)
         return None
