@@ -23,7 +23,7 @@ from dbus_fast import BusType
 from dbus_fast.aio import MessageBus
 
 from mpdris2.bridge import BridgeConfig, MpdMprisBridge
-from mpdris2.cover import DEFAULT_COVER_CACHE_DIR, DEFAULT_COVER_REGEX
+from mpdris2.cover import DEFAULT_COVER_REGEX
 from mpdris2.mpd_client import is_unix_socket
 from mpdris2.notify import Notifier, NotifierConfig, NotifyTemplates
 
@@ -165,11 +165,6 @@ def _resolve_cover_regex(cfg: configparser.ConfigParser) -> re.Pattern[str]:
         return DEFAULT_COVER_REGEX
 
 
-def _resolve_cover_cache_dir(cfg: configparser.ConfigParser) -> Path:
-    raw = cfg.get("Library", "cover_cache_dir", fallback=None)
-    return Path(raw).expanduser() if raw else DEFAULT_COVER_CACHE_DIR
-
-
 def _resolve_cdprev(cfg: configparser.ConfigParser) -> bool:
     return cfg.getboolean("Bling", "cdprev", fallback=False)
 
@@ -186,7 +181,6 @@ def build_bridge_config(
         is_socket=is_socket,
         music_dir=_resolve_music_dir(cfg, args),
         cover_regex=_resolve_cover_regex(cfg),
-        cover_cache_dir=_resolve_cover_cache_dir(cfg),
         cdprev=_resolve_cdprev(cfg),
         notify_paused=_resolve_notify_paused(cfg),
         no_reconnect=args.no_reconnect,
