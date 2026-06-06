@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import configparser
-import os
 from pathlib import Path
 
 from mpdris2.cli import (
@@ -74,17 +73,22 @@ def test_read_config_parses_ini(tmp_path: Path) -> None:
     assert cfg.get("Library", "music_dir") == "/srv/music"
 
 
-def test_read_config_no_argument_falls_back_to_xdg(tmp_path: Path, monkeypatch) -> None:
-    # Force the XDG path to point inside tmp_path so the lookup
-    # is hermetic. With no file present the parser still returns an
-    # empty ConfigParser rather than raising.
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    # Re-import so the module-level CONFIG_PATHS would pick up XDG —
-    # but CONFIG_PATHS is computed at import time, so this exercises the
-    # caller-supplied None branch instead.
+def test_read_config_no_argument_empty_when_no_file(tmp_path: Path, monkeypatch) -> None:
+    # No arg → search the default paths; nothing present → empty parser, no raise.
+    monkeypatch.setattr("mpdris2.cli._config_paths", lambda: [tmp_path / "absent.conf"])
     cfg = read_config(None)
     assert cfg.sections() == []
-    os.environ.pop("XDG_CONFIG_HOME", None)
+
+
+def test_read_config_honours_xdg_config_home(tmp_path: Path, monkeypatch) -> None:
+    # XDG_CONFIG_HOME is resolved live, and its file is found before the
+    # system fallback (it's first in the search order).
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    cfgfile = tmp_path / "mpDris2" / "mpDris2.conf"
+    cfgfile.parent.mkdir(parents=True)
+    cfgfile.write_text("[Connection]\nhost = xdg.example\n")
+    cfg = read_config(None)
+    assert cfg.get("Connection", "host") == "xdg.example"
 
 
 # --- _resolve_music_dir ----------------------------------------------------
