@@ -78,6 +78,7 @@ class BridgeConfig:
     cover_regex: re.Pattern[str]
     cover_itunes: bool
     cover_deezer: bool
+    cover_mympd_uri: str | None
     cdprev: bool
     notify_paused: bool
     no_reconnect: bool
@@ -171,6 +172,7 @@ class MpdMprisBridge:
                 cover_regex=config.cover_regex,
                 use_itunes=config.cover_itunes,
                 use_deezer=config.cover_deezer,
+                mympd_url=config.cover_mympd_uri,
             )
         )
         self.bus = bus

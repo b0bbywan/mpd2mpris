@@ -11,6 +11,7 @@ from mpdris2.cli import (
     _resolve_cdprev,
     _resolve_cover_backend,
     _resolve_music_dir,
+    _resolve_mympd_uri,
     _resolve_notifier_config,
     _resolve_notify,
     _resolve_notify_paused,
@@ -236,3 +237,27 @@ def test_resolve_cover_backend_explicit_true() -> None:
     cfg.read_string("[Cover]\nitunes = True\ndeezer = True\n")
     assert _resolve_cover_backend(cfg, "itunes") is True
     assert _resolve_cover_backend(cfg, "deezer") is True
+
+
+# --- _resolve_mympd_uri ----------------------------------------------------
+
+def test_resolve_mympd_uri_default_none() -> None:
+    assert _resolve_mympd_uri(configparser.ConfigParser()) is None
+
+
+def test_resolve_mympd_uri_explicit() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[Cover]\nmympd_uri = http://host:8080\n")
+    assert _resolve_mympd_uri(cfg) == "http://host:8080"
+
+
+def test_resolve_mympd_uri_blank_is_none() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[Cover]\nmympd_uri =\n")
+    assert _resolve_mympd_uri(cfg) is None
+
+
+def test_resolve_mympd_uri_strips_surrounding_quotes() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string('[Cover]\nmympd_uri = "http://localhost:8090"\n')
+    assert _resolve_mympd_uri(cfg) == "http://localhost:8090"

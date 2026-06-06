@@ -175,6 +175,15 @@ def _resolve_cover_backend(cfg: configparser.ConfigParser, name: str) -> bool:
     return cfg.getboolean("Cover", name, fallback=False)
 
 
+def _resolve_mympd_uri(cfg: configparser.ConfigParser) -> str | None:
+    """Base URL of a myMPD instance for the WebradioDB cover fallback
+    (``[Cover] mympd_uri``); ``None`` (disabled) when unset. Surrounding
+    quotes/whitespace are stripped — configparser keeps them literal, and
+    a quoted URL would otherwise yield an ``unknown url type`` error."""
+    raw = cfg.get("Cover", "mympd_uri", fallback="").strip().strip("'\"").strip()
+    return raw or None
+
+
 def build_bridge_config(
     cfg: configparser.ConfigParser, args: argparse.Namespace,
 ) -> BridgeConfig:
@@ -189,6 +198,7 @@ def build_bridge_config(
         cover_regex=_resolve_cover_regex(cfg),
         cover_itunes=_resolve_cover_backend(cfg, "itunes"),
         cover_deezer=_resolve_cover_backend(cfg, "deezer"),
+        cover_mympd_uri=_resolve_mympd_uri(cfg),
         cdprev=_resolve_cdprev(cfg),
         notify_paused=_resolve_notify_paused(cfg),
         no_reconnect=args.no_reconnect,
