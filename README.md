@@ -76,8 +76,16 @@ password =
 music_dir = /media/music/
 # Override the default cover-file regex; useful for non-standard names.
 #cover_regex = ^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$
-# Where the downloaded-covers cache lives (defaults to $XDG_CACHE_HOME/mpDris2/).
-#cover_cache_dir =
+
+[Cover]
+# Opt-in remote cover-art fallbacks, tried after MusicBrainz/CAA when it
+# has no image (pipeline step 5). Broaden coverage at the cost of extra
+# third-party queries; both off by default.
+#itunes = False
+#deezer = False
+# Base URL of a myMPD instance, queried as a last resort (step 7) for a
+# web-radio stream's WebradioDB cover. Unset = disabled.
+#mympd_uri = http://localhost:8080
 
 [Bling]
 # Send desktop notifications on track change.
@@ -152,4 +160,12 @@ step that yields a usable image wins; later steps are skipped.
 | 2 | FS regex scan | `cover_regex` match in the song's directory (default matches `cover.*`, `folder.*`, `album.*`, `front.*`) | `file://` URI of the matched file (RFC-3986 percent-encoded) | A non-standardly-named cover sits next to the audio file (local FS only) |
 | 3 | MPD `albumart` | `cover.{png,jpg,jxl,webp}` in the song's directory (resolved server-side by MPD) | `file:///tmp/cover-*.{jpg,png,…}` | Remote MPD, or step 2 missed (standard name only) |
 | 4 | CUE/cdda fallback | `cover_regex` match next to the loaded `.cue` playlist (FS scan), falling back to MPD `albumart` (which server-side resolves `cover.{png,jpg,jxl,webp}`) when music_dir isn't locally accessible | `file://` URI of the matched file (local FS) or `file:///tmp/cover-*` (remote MPD) | The song is a CUE virtual track (cdda://, http://, …) and the CUE's own directory holds a cover |
-| 5 | XDG cover cache | `$XDG_CACHE_HOME/mpDris2/{artist}-{album}.{jpg,png,…}` | `file://` URI of the cached file | Earlier steps failed and a previous run (or the optional MusicBrainz fallback) populated the cache |
+| 5 | Remote cover URL | MusicBrainz/CAA (always), then the opt-in iTunes/Deezer fallbacks (`[Cover] itunes`/`deezer`). For web radio (title only) the artist+album are recovered from MusicBrainz, then Deezer when enabled | Remote image **URL** served verbatim (no download) | Earlier steps failed and a source has cover art for the `(artist, album)` |
+| 6 | Station favicon | Community Radio Browser lookup of the stream URL | Station favicon **URL** served verbatim | An `http(s)://` web-radio stream whose station has a favicon |
+| 7 | myMPD WebradioDB | `MYMPD_API_WEBRADIODB_RADIO_GET_BY_URI` against the myMPD at `[Cover] mympd_uri` (opt-in) | WebradioDB cover **URL** served verbatim | A web-radio stream that the configured myMPD's WebradioDB knows |
+
+Step 5's MusicBrainz/CAA lookup needs the optional `[cover]` extra
+(`pip install '.[cover]'`, or the `python3-musicbrainzngs` +
+`python3-rapidfuzz` packages); the iTunes, Deezer and myMPD fallbacks are
+stdlib-only. Steps 5–7 return a remote URL verbatim — nothing is
+downloaded or cached to disk.
