@@ -25,16 +25,14 @@ from dbus_fast.aio import MessageBus
 from mpdris2.bridge import BridgeConfig, MpdMprisBridge
 from mpdris2.cover import DEFAULT_COVER_REGEX
 from mpdris2.mpd_client import is_unix_socket
-from mpdris2.notify import Notifier, NotifierConfig, NotifyTemplates
 
 logger = logging.getLogger("mpdris2")
 
 BUS_CONNECT_TIMEOUT = 10.0
 
 # Bind the message catalog so ``from gettext import gettext as _``
-# lookups in bridge.py / notify.py hit our installed .mo files.
-# Catalogs ship as package data under
-# ``mpdris2/locale/<lang>/LC_MESSAGES/mpdris2.mo``.
+# lookups hit our installed .mo files. Catalogs ship as package data
+# under ``mpdris2/locale/<lang>/LC_MESSAGES/mpdris2.mo``.
 _LOCALE_DIR = Path(__file__).resolve().parent / "locale"
 gettext.bindtextdomain("mpdris2", str(_LOCALE_DIR))
 gettext.textdomain("mpdris2")
@@ -54,7 +52,7 @@ def read_config(path: str | Path | None = None) -> configparser.ConfigParser:
     """Parse the first existing INI file (or ``path`` if given).
 
     Sections preserved from the original mpDris2 layout:
-    ``[Connection]`` / ``[Library]`` / ``[Bling]`` / ``[Notify]``.
+    ``[Connection]`` / ``[Library]`` / ``[Cover]`` / ``[Bling]``.
     Missing file is not an error — defaults apply.
     """
     cfg = configparser.ConfigParser()
@@ -66,36 +64,6 @@ def read_config(path: str | Path | None = None) -> configparser.ConfigParser:
             return cfg
     logger.info("no config file found, using defaults")
     return cfg
-
-
-def _resolve_notify(cfg: configparser.ConfigParser) -> bool:
-    # [Notify] preferred, fall back to deprecated [Bling].
-    return cfg.getboolean(
-        "Notify", "notify",
-        fallback=cfg.getboolean("Bling", "notification", fallback=True),
-    )
-
-
-def _resolve_notify_paused(cfg: configparser.ConfigParser) -> bool:
-    return cfg.getboolean("Bling", "notify_paused", fallback=False)
-
-
-def _resolve_notify_templates(cfg: configparser.ConfigParser) -> NotifyTemplates:
-    # raw=True so configparser doesn't try to interpolate the literal
-    # ``%title%`` etc. as variables.
-    return NotifyTemplates(
-        summary=cfg.get("Notify", "summary", fallback="", raw=True),
-        body=cfg.get("Notify", "body", fallback="", raw=True),
-        paused_summary=cfg.get("Notify", "paused_summary", fallback="", raw=True),
-        paused_body=cfg.get("Notify", "paused_body", fallback="", raw=True),
-    )
-
-
-def _resolve_notifier_config(cfg: configparser.ConfigParser) -> NotifierConfig:
-    return NotifierConfig(
-        urgency=cfg.getint("Notify", "urgency", fallback=1),
-        timeout=cfg.getint("Notify", "timeout", fallback=-1),
-    )
 
 
 def _resolve_endpoint(
@@ -206,7 +174,6 @@ def build_bridge_config(
         cover_stream_sources=_resolve_cover_list(cfg, "stream_sources"),
         cover_mympd_uri=_resolve_mympd_uri(cfg),
         cdprev=_resolve_cdprev(cfg),
-        notify_paused=_resolve_notify_paused(cfg),
         no_reconnect=args.no_reconnect,
     )
 
@@ -273,13 +240,7 @@ def main() -> None:
             )
             raise
 
-        notifier = Notifier(
-            bus, app_name="mpDris2",
-            config=_resolve_notifier_config(cfg),
-            templates=_resolve_notify_templates(cfg),
-        ) if _resolve_notify(cfg) else None
-
-        bridge = MpdMprisBridge(bridge_config, bus=bus, notifier=notifier)
+        bridge = MpdMprisBridge(bridge_config, bus=bus)
         try:
             await bridge.setup()
             await bridge.run_loop()
