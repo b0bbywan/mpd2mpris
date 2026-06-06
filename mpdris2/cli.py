@@ -29,11 +29,14 @@ logger = logging.getLogger("mpdris2")
 
 BUS_CONNECT_TIMEOUT = 10.0
 
-CONFIG_PATHS = [
-    Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    / "mpDris2" / "mpDris2.conf",
-    Path("/etc/mpDris2/mpDris2.conf"),
-]
+def _config_paths() -> list[Path]:
+    """Default config search path, resolved at call time so ``XDG_CONFIG_HOME``
+    is honoured live (the user's ``~/.config`` first, the system file next)."""
+    return [
+        Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        / "mpDris2" / "mpDris2.conf",
+        Path("/etc/mpDris2/mpDris2.conf"),
+    ]
 
 
 class ConfigError(Exception):
@@ -48,7 +51,7 @@ def read_config(path: str | Path | None = None) -> configparser.ConfigParser:
     Missing file is not an error — defaults apply.
     """
     cfg = configparser.ConfigParser()
-    paths: list[Path] = [Path(path)] if path else CONFIG_PATHS
+    paths: list[Path] = [Path(path)] if path else _config_paths()
     for p in paths:
         if p.exists():
             cfg.read(p)
