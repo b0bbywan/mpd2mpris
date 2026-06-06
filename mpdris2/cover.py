@@ -49,12 +49,15 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, TypeVar
 
 from mpdris2 import deezer, itunes, musicbrainz, mympd, radiobrowser
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
+
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 DEFAULT_COVER_REGEX = re.compile(
     r"^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$",
@@ -424,12 +427,11 @@ class CoverFinder:
         title = first(mpd_meta.get("title"))
         if not title:
             return artist, album
-        if title not in self._title_key_cache:
-            key, definitive = await self._resolve_title(title)
-            if definitive:  # don't cache a transient lookup failure
-                self._title_key_cache[title] = key
-            return key or (artist, album)
-        return self._title_key_cache[title] or (artist, album)
+        key = await self._cached_definitive(
+            self._title_key_cache, title,
+            lambda: self._resolve_title(title),
+        )
+        return key or (artist, album)
 
     async def _resolve_title(self, title: str) -> tuple[tuple[str, str] | None, bool]:
         """Resolve a web-radio title to (artist, album) via MusicBrainz then
@@ -459,13 +461,10 @@ class CoverFinder:
         if not artist or not album:
             logger.debug("cover: no remote key (artist=%r album=%r)", artist, album)
             return None
-        key = (artist, album)
-        if key in self._url_cache:
-            return self._url_cache[key]
-        url, definitive = await self._lookup_cover_url(artist, album)
-        if definitive:  # don't cache a transient lookup failure
-            self._url_cache[key] = url
-        return url
+        return await self._cached_definitive(
+            self._url_cache, (artist, album),
+            lambda: self._lookup_cover_url(artist, album),
+        )
 
     async def _lookup_cover_url(self, artist: str, album: str) -> tuple[str | None, bool]:
         """Return ``(url, definitive)``. ``definitive`` is False when a source
@@ -484,6 +483,43 @@ class CoverFinder:
                 return url, True
         return None, not errored
 
+    async def _cached_lookup(
+        self,
+        cache: dict[_K, _V | None],
+        key: _K,
+        lookup: Callable[[], Awaitable[_V | None]],
+    ) -> _V | None:
+        """Serve ``key`` from ``cache``, else run a single-source ``lookup()``
+        and store it. A hit or a clean miss is cached; a transient error
+        (``lookup`` raises) is logged and returned as ``None`` without
+        caching, so it's retried next time."""
+        if key in cache:
+            return cache[key]
+        try:
+            value = await lookup()
+        except Exception as e:
+            logger.debug("cover: lookup for %s failed: %r", key, e)
+            return None
+        cache[key] = value
+        return value
+
+    async def _cached_definitive(
+        self,
+        cache: dict[_K, _V | None],
+        key: _K,
+        compute: Callable[[], Awaitable[tuple[_V | None, bool]]],
+    ) -> _V | None:
+        """Serve ``key`` from ``cache``, else run a multi-source ``compute()``
+        → ``(value, definitive)`` and store it only when ``definitive`` (a
+        clean hit or all-source miss). A non-definitive result (some source
+        errored) isn't cached, so it's retried next time."""
+        if key in cache:
+            return cache[key]
+        value, definitive = await compute()
+        if definitive:
+            cache[key] = value
+        return value
+
     # --- step 6: web-radio station favicon URL ----------------------
     async def _station_favicon(self, stream_url: str) -> str | None:
         """Favicon URL of the station serving an http(s):// stream, memoised
@@ -491,15 +527,10 @@ class CoverFinder:
         the remote artUrl themselves."""
         if not stream_url.startswith(("http://", "https://")):
             return None
-        if stream_url in self._station_cache:
-            return self._station_cache[stream_url]
-        try:
-            icon = await radiobrowser.station_icon(stream_url)
-        except Exception as e:  # transient — don't cache, retry next time
-            logger.debug("cover: radiobrowser failed for %s: %r", stream_url, e)
-            return None
-        self._station_cache[stream_url] = icon
-        return icon
+        return await self._cached_lookup(
+            self._station_cache, stream_url,
+            lambda: radiobrowser.station_icon(stream_url),
+        )
 
     # --- step 7: myMPD WebradioDB cover URL --------------------------
     async def _mympd_cover(self, stream_url: str) -> str | None:
@@ -508,15 +539,11 @@ class CoverFinder:
         configured. Returned verbatim — MPRIS clients fetch the artUrl."""
         if not self._mympd_url or not stream_url.startswith(("http://", "https://")):
             return None
-        if stream_url in self._mympd_cache:
-            return self._mympd_cache[stream_url]
-        try:
-            cover = await mympd.cover_url(self._mympd_url, stream_url)
-        except Exception as e:  # transient — don't cache, retry next time
-            logger.debug("cover: mympd failed for %s: %r", stream_url, e)
-            return None
-        self._mympd_cache[stream_url] = cover
-        return cover
+        base = self._mympd_url  # narrowed to str for the closure
+        return await self._cached_lookup(
+            self._mympd_cache, stream_url,
+            lambda: mympd.cover_url(base, stream_url),
+        )
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
