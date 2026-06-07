@@ -583,6 +583,40 @@ async def test_mympd_cover_not_cached_on_transient_error(monkeypatch) -> None:
     assert await cf._mympd_cover(stream) == _WDB  # retried
 
 
+# --- _stream_cover (steps 6-7 priority list) -----------------------------
+
+@pytest.mark.asyncio
+async def test_stream_cover_default_off(monkeypatch) -> None:
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
+    cf = CoverFinder()  # no stream_sources
+    assert await cf._stream_cover("http://stream") is None
+
+
+@pytest.mark.asyncio
+async def test_stream_cover_order_follows_config(monkeypatch) -> None:
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    # radiobrowser listed first → it wins over myMPD this time.
+    cf = CoverFinder(CoverFinderConfig(
+        stream_sources=("radiobrowser", "mympd"), mympd_url="http://host:8080",
+    ))
+    assert await cf._stream_cover("http://stream") == "https://x/fav.ico"
+
+
+@pytest.mark.asyncio
+async def test_stream_cover_mympd_listed_without_uri_skipped(monkeypatch) -> None:
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    cf = CoverFinder(CoverFinderConfig(stream_sources=("mympd",)))  # no mympd_url
+    assert await cf._stream_cover("http://stream") is None  # mympd skipped at init
+
+
+@pytest.mark.asyncio
+async def test_stream_cover_unknown_source_ignored(monkeypatch) -> None:
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
+    cf = CoverFinder(CoverFinderConfig(stream_sources=("bogus", "radiobrowser")))
+    assert await cf._stream_cover("http://stream") == "https://x/fav.ico"
+
+
 # --- _materialise + temp reuse via find() --------------------------------
 
 def test_materialise_writes_bytes_at_returned_uri() -> None:
@@ -704,6 +738,44 @@ async def test_find_falls_through_to_step5_remote_url(
         mpd_meta={"artist": "Artist", "album": "Album"},
     ))
     assert uri == "https://caa/front-500.jpg"  # remote URL returned as-is, not downloaded
+
+
+@pytest.mark.asyncio
+async def test_find_prefers_mympd_cover_over_favicon(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # Steps 1-5 miss (web-radio stream, no key); both stream sources resolve
+    # — myMPD is listed first, so its curated cover wins.
+    _patch_sources(monkeypatch)
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    cf = CoverFinder(CoverFinderConfig(
+        stream_sources=("mympd", "radiobrowser"), mympd_url="http://host:8080",
+    ))
+    uri = await cf.find(SongLookup(
+        client=_client_with(),
+        song_uri="http://stream/radio",
+        song_file="http://stream/radio",
+        mpd_meta={"title": "Jingle"},  # title-only, no resolvable key
+    ))
+    assert uri == _WDB
+
+
+@pytest.mark.asyncio
+async def test_find_falls_back_to_favicon_without_mympd(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # myMPD listed but no mympd_url (skipped) — the favicon still serves.
+    _patch_sources(monkeypatch)
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
+    cf = CoverFinder(CoverFinderConfig(stream_sources=("mympd", "radiobrowser")))  # no mympd_url
+    uri = await cf.find(SongLookup(
+        client=_client_with(),
+        song_uri="http://stream/radio",
+        song_file="http://stream/radio",
+        mpd_meta={"title": "Jingle"},
+    ))
+    assert uri == "https://x/favicon.ico"
 
 
 @pytest.mark.asyncio

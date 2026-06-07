@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, TypeVar
 
-from mpdris2 import deezer, itunes, musicbrainz
+from mpdris2 import deezer, itunes, musicbrainz, mympd, radiobrowser
 from mpdris2.translate import first, split_title
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,10 @@ class CoverFinderConfig:
     # Step-5 cover-URL sources by name, in priority order (``[Cover] sources``);
     # empty = none. Valid names in _COVER_SOURCES; unknown ones are ignored.
     cover_sources: tuple[str, ...] = ()
-    mympd_url: str | None = None  # myMPD base URL for step 7; None disables it
+    # Web-radio stream cover sources (steps 6-7) by name, in priority order
+    # (``[Cover] stream_sources``): ``radiobrowser`` / ``mympd``. empty = none.
+    stream_sources: tuple[str, ...] = ()
+    mympd_url: str | None = None  # myMPD base URL the ``mympd`` source needs
 
 
 @dataclass(frozen=True)
@@ -180,10 +183,24 @@ class CoverFinder:
                 logger.warning("cover: ignoring unknown [Cover] source %r", name)
                 continue
             self._cover_sources.append(source)
+        # Steps 6-7 stream sources, resolved to bound methods in priority order.
+        stream_methods = {"radiobrowser": self._station_favicon, "mympd": self._mympd_cover}
+        self._stream_sources: list[Callable[[str], Awaitable[str | None]]] = []
+        for name in config.stream_sources:
+            method = stream_methods.get(name)
+            if method is None:
+                logger.warning("cover: ignoring unknown [Cover] stream source %r", name)
+                continue
+            if name == "mympd" and not config.mympd_url:
+                logger.warning("cover: stream source 'mympd' listed but mympd_uri unset; skipping")
+                continue
+            self._stream_sources.append(method)
         self._temp_song_uri: str | None = None
         self._temp_cover: IO[bytes] | None = None
         self._url_cache: dict[tuple[str, str], str | None] = _BoundedCache()  # step 5, tagged
         self._title_cover_cache: dict[str, str | None] = _BoundedCache()  # step 5, web radio
+        self._station_cache: dict[str, str | None] = _BoundedCache()  # step 6
+        self._mympd_cache: dict[str, str | None] = _BoundedCache()  # step 7
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -254,6 +271,12 @@ class CoverFinder:
             cover = await self._remote_cover_for_title(title)
         else:
             cover = None
+        if cover:
+            return cover
+
+        # 6 + 7. Web-radio stream covers (radiobrowser / myMPD), in the
+        #        configured priority order.
+        cover = await self._stream_cover(req.song_file)
         if cover:
             return cover
 
@@ -423,6 +446,38 @@ class CoverFinder:
             return None
         cache[key] = value
         return value
+
+    # --- steps 6 + 7: web-radio stream covers -----------------------
+    async def _stream_cover(self, stream_url: str) -> str | None:
+        """First cover URL from the configured stream sources, queried
+        concurrently and picked in priority (list) order. Each source caches
+        and swallows its own errors, so this never raises."""
+        if not self._stream_sources:
+            return None
+        results = await asyncio.gather(*(source(stream_url) for source in self._stream_sources))
+        return next((url for url in results if url), None)
+
+    # --- step 6: web-radio station favicon URL ----------------------
+    async def _station_favicon(self, stream_url: str) -> str | None:
+        """Favicon URL of the station serving an http(s):// stream."""
+        if not stream_url.startswith(("http://", "https://")):
+            return None
+        return await self._cached_lookup(
+            self._station_cache, stream_url,
+            lambda: radiobrowser.station_icon(stream_url),
+        )
+
+    # --- step 7: myMPD WebradioDB cover URL --------------------------
+    async def _mympd_cover(self, stream_url: str) -> str | None:
+        """WebradioDB cover URL from the configured myMPD for an http(s)://
+        stream. ``None`` when no myMPD is configured."""
+        if not self._mympd_url or not stream_url.startswith(("http://", "https://")):
+            return None
+        base = self._mympd_url  # narrow to str for the closure
+        return await self._cached_lookup(
+            self._mympd_cache, stream_url,
+            lambda: mympd.cover_url(base, stream_url),
+        )
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
