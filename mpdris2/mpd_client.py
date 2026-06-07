@@ -73,17 +73,10 @@ async def connect(
 
 
 async def fetch_config(client: MPDClient) -> dict[str, str]:
-    """Send MPD's ``config`` command and parse the response as a dict.
-
-    Works around python-mpd2 3.1.x mapping ``config`` to
-    ``_parse_item`` (which only handles single-pair responses);
-    ``config`` actually returns multiple pairs (``music_directory``,
-    ``playlist_directory``, ``pcre``), so the upstream parser returns
-    ``None`` and we never see the data.
-
-    We reuse python-mpd2's internal command queue + writer with a
-    correct dict-parsing callback. Only allowed on local socket
-    connections (MPD answers "Access denied" on TCP).
+    """Send MPD's ``config`` command and parse its multi-pair response as a
+    dict — python-mpd2 3.1.x mis-parses it (its handler reads only single-pair
+    responses, dropping the data), so we reuse the lib's command queue with a
+    dict-parsing callback. Socket-only (TCP gets "Access denied").
     """
     def _parse_as_dict(client_: MPDClient, lines: list) -> dict[str, str]:
         return dict(client_._parse_pairs(lines))
