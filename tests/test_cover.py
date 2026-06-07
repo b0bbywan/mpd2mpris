@@ -482,6 +482,121 @@ async def test_remote_cover_caches_confirmed_miss(monkeypatch) -> None:
     assert calls == [("A", "B")]  # confirmed miss memoised
 
 
+# --- _station_favicon (step 6) -------------------------------------------
+
+@pytest.mark.asyncio
+async def test_station_favicon_skips_non_http(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _icon(url: str) -> str:
+        calls.append(url)
+        return "https://x/favicon.ico"
+
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    cf = CoverFinder()
+    assert await cf._station_favicon("relative/track.flac") is None
+    assert calls == []  # not an http(s) stream → never queried
+
+
+@pytest.mark.asyncio
+async def test_station_favicon_returns_url_and_memoises(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _icon(url: str) -> str:
+        calls.append(url)
+        return "https://x/favicon.ico"
+
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    cf = CoverFinder()
+    stream = "http://hd.example.info/reggae-192.mp3"
+    assert await cf._station_favicon(stream) == "https://x/favicon.ico"
+    assert await cf._station_favicon(stream) == "https://x/favicon.ico"
+    assert calls == [stream]  # second call served from memo
+
+
+@pytest.mark.asyncio
+async def test_station_favicon_not_cached_on_transient_error(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _icon(url: str) -> str:
+        calls.append(url)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return "https://x/favicon.ico"
+
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    cf = CoverFinder()
+    stream = "http://hd.example.info/reggae-192.mp3"
+    assert await cf._station_favicon(stream) is None  # errored → not cached
+    assert await cf._station_favicon(stream) == "https://x/favicon.ico"  # retried
+
+
+# --- _mympd_cover (step 7) -----------------------------------------------
+
+_WDB = "https://jcorporation.github.io/webradiodb/db/pics/stream.webp"
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_disabled_without_uri(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append((base, stream))
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder()  # no mympd_url
+    assert await cf._mympd_cover("http://stream") is None
+    assert calls == []  # not configured → never queried
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_skips_non_http(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append(stream)
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    assert await cf._mympd_cover("relative/track.flac") is None
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_returns_url_and_memoises(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append((base, stream))
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    stream = "http://absolut.example/coffee.mp3"
+    assert await cf._mympd_cover(stream) == _WDB
+    assert await cf._mympd_cover(stream) == _WDB
+    assert calls == [("http://host:8080", stream)]  # second call served from memo
+
+
+@pytest.mark.asyncio
+async def test_mympd_cover_not_cached_on_transient_error(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def _cover(base: str, stream: str) -> str:
+        calls.append(stream)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return _WDB
+
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    stream = "http://absolut.example/coffee.mp3"
+    assert await cf._mympd_cover(stream) is None  # errored → not cached
+    assert await cf._mympd_cover(stream) == _WDB  # retried
+
+
 # --- _materialise + temp reuse via find() --------------------------------
 
 def test_materialise_writes_bytes_at_returned_uri() -> None:
@@ -603,6 +718,42 @@ async def test_find_falls_through_to_step5_remote_url(
         mpd_meta={"artist": "Artist", "album": "Album"},
     ))
     assert uri == "https://caa/front-500.jpg"  # remote URL returned as-is, not downloaded
+
+
+@pytest.mark.asyncio
+async def test_find_prefers_mympd_cover_over_favicon(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # Steps 1-5 miss (web-radio stream, no key); both step 6 (favicon) and
+    # step 7 (myMPD WebradioDB) resolve — the curated WebradioDB cover wins.
+    _patch_sources(monkeypatch)
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
+    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    cf = CoverFinder(CoverFinderConfig(mympd_url="http://host:8080"))
+    uri = await cf.find(SongLookup(
+        client=_client_with(),
+        song_uri="http://stream/radio",
+        song_file="http://stream/radio",
+        mpd_meta={"title": "Jingle"},  # title-only, no resolvable key
+    ))
+    assert uri == _WDB
+
+
+@pytest.mark.asyncio
+async def test_find_falls_back_to_favicon_without_mympd(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # No myMPD configured (or it misses) — the favicon still serves.
+    _patch_sources(monkeypatch)
+    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
+    cf = CoverFinder()  # no mympd_url
+    uri = await cf.find(SongLookup(
+        client=_client_with(),
+        song_uri="http://stream/radio",
+        song_file="http://stream/radio",
+        mpd_meta={"title": "Jingle"},
+    ))
+    assert uri == "https://x/favicon.ico"
 
 
 @pytest.mark.asyncio
