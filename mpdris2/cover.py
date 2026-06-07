@@ -23,8 +23,9 @@ parsing/transferring for that guarantee.
    ``albumart``.
 5. Remote cover URL — MusicBrainz/CAA (canonical), then the opt-in
    iTunes and Deezer fallbacks (broader coverage, off by default), each
-   returning an image **URL** served verbatim as ``mpris:artUrl`` (no
-   download — lighter, and we link rather than re-host). Memoised per
+   returning an image **URL** that becomes ``mpris:artUrl`` unchanged —
+   the image is never downloaded, the MPRIS client fetches it (lighter,
+   and we link rather than re-host). Memoised per
    (artist, album). For web radio
    (only a title, no album tag) the artist+album are first recovered
    from MusicBrainz, then Deezer as a fallback, so this path can key on
@@ -191,10 +192,10 @@ class CoverFinder:
         self._can_albumart = config.can_albumart
         self._use_deezer = config.use_deezer
         self._mympd_url = config.mympd_url
-        # Remote cover-URL sources tried in order, first hit wins:
-        # MusicBrainz/CAA (canonical, always on), then the opt-in,
-        # broader-coverage, no-auth fallbacks. Each exposes
-        # ``cover_url(artist, album) -> str | None``.
+        # Remote cover-URL sources, queried concurrently with the
+        # highest-priority hit winning: MusicBrainz/CAA (canonical, always
+        # on) first, then the opt-in, broader-coverage, no-auth fallbacks.
+        # Each exposes ``cover_url(artist, album) -> str | None``.
         self._cover_sources: list[Any] = [musicbrainz]
         if config.use_itunes:
             self._cover_sources.append(itunes)
@@ -284,21 +285,20 @@ class CoverFinder:
         # — for web radio with only a title — recovered from MusicBrainz.
         artist, album = await self._resolve_key(req.mpd_meta)
 
-        # 5. Remote cover URL (MusicBrainz/CAA, iTunes, Deezer), served
-        #    verbatim — MPRIS clients fetch the artUrl themselves.
+        # 5. Remote cover URL (MusicBrainz/CAA, iTunes, Deezer) — the image
+        #    isn't downloaded, the MPRIS client fetches the URL itself.
         cover = await self._remote_cover(artist, album)
         if cover:
             return cover
 
-        # 6. Web-radio station favicon URL — radio-browser, for http(s)://
-        #    streams (returned as-is; MPRIS clients fetch artUrl themselves).
-        cover = await self._station_favicon(req.song_file)
-        if cover:
-            return cover
-
-        # 7. myMPD WebradioDB cover URL — opt-in last resort, when a myMPD
-        #    instance is configured.
-        cover = await self._mympd_cover(req.song_file)
+        # 6 + 7. Web-radio stream covers — the radio-browser station favicon
+        #        and the opt-in myMPD WebradioDB cover, queried concurrently
+        #        (favicon preferred). Both return a URL, not a downloaded image.
+        favicon, mympd_cover = await asyncio.gather(
+            self._station_favicon(req.song_file),
+            self._mympd_cover(req.song_file),
+        )
+        cover = favicon or mympd_cover
         if cover:
             return cover
 
@@ -434,30 +434,32 @@ class CoverFinder:
         return key or (artist, album)
 
     async def _resolve_title(self, title: str) -> tuple[tuple[str, str] | None, bool]:
-        """Resolve a web-radio title to (artist, album) via MusicBrainz then
-        Deezer. Returns ``(key, definitive)``; ``definitive`` is False when a
-        source errored and none resolved — the caller skips caching so a
-        transient failure is retried."""
+        """Resolve a web-radio title to (artist, album) from MusicBrainz and
+        (when enabled) Deezer, queried concurrently — the highest-priority
+        hit (MusicBrainz first) wins. Returns ``(key, definitive)``;
+        ``definitive`` is False when a source errored and none resolved, so
+        the caller skips caching and retries."""
+        sources: list[tuple[str, Callable[[str], Awaitable[tuple[str, str] | None]]]] = [
+            ("musicbrainz", musicbrainz.resolve_album),
+        ]
+        if self._use_deezer:
+            sources.append(("deezer", deezer.resolve_album))
+        results = await asyncio.gather(*(fn(title) for _, fn in sources), return_exceptions=True)
         key: tuple[str, str] | None = None
         errored = False
-        try:
-            key = await musicbrainz.resolve_album(title)
-        except Exception as e:
-            logger.debug("cover: musicbrainz resolve failed for %r: %r", title, e)
-            errored = True
-        if key is None and self._use_deezer:
-            try:
-                key = await deezer.resolve_album(title)
-            except Exception as e:
-                logger.debug("cover: deezer resolve failed for %r: %r", title, e)
+        for (name, _fn), res in zip(sources, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.debug("cover: %s resolve failed for %r: %r", name, title, res)
                 errored = True
+            elif res and key is None:
+                key = res  # first (highest-priority) hit
         return key, key is not None or not errored
 
     # --- step 5: remote cover URL -----------------------------------
     async def _remote_cover(self, artist: str, album: str) -> str | None:
-        """First cover URL from MusicBrainz/iTunes/Deezer for an album,
-        served verbatim. Memoised per (artist, album); ``None`` when
-        artist/album is missing or no source has it."""
+        """First cover URL from MusicBrainz/iTunes/Deezer for an album (the
+        URL itself — the image isn't downloaded). Memoised per (artist,
+        album); ``None`` when artist/album is missing or no source has it."""
         if not artist or not album:
             logger.debug("cover: no remote key (artist=%r album=%r)", artist, album)
             return None
@@ -467,21 +469,25 @@ class CoverFinder:
         )
 
     async def _lookup_cover_url(self, artist: str, album: str) -> tuple[str | None, bool]:
-        """Return ``(url, definitive)``. ``definitive`` is False when a source
-        errored and none yielded a URL — the caller skips caching so a
-        transient failure is retried; a clean all-miss is definitive."""
+        """Query the cover sources concurrently and return ``(url,
+        definitive)`` for the highest-priority hit (sources are ordered
+        MusicBrainz-first). ``definitive`` is False when a source errored
+        and none yielded a URL — the caller skips caching so a transient
+        failure is retried; a clean all-miss is definitive."""
+        results = await asyncio.gather(
+            *(source.cover_url(artist, album) for source in self._cover_sources),
+            return_exceptions=True,
+        )
+        url: str | None = None
         errored = False
-        for source in self._cover_sources:
-            try:
-                url: str | None = await source.cover_url(artist, album)
-            except Exception as e:
-                logger.debug("cover: %s failed for %r / %r: %r", source.__name__, artist, album, e)
+        for source, res in zip(self._cover_sources, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.debug("cover: %s failed for %r / %r: %r", source.__name__, artist, album, res)
                 errored = True
-                continue
-            if url:
-                logger.debug("cover: %s -> %s", source.__name__, url)
-                return url, True
-        return None, not errored
+            elif res and url is None:
+                logger.debug("cover: %s -> %s", source.__name__, res)
+                url = res  # first (highest-priority) hit
+        return url, url is not None or not errored
 
     async def _cached_lookup(
         self,
@@ -523,8 +529,8 @@ class CoverFinder:
     # --- step 6: web-radio station favicon URL ----------------------
     async def _station_favicon(self, stream_url: str) -> str | None:
         """Favicon URL of the station serving an http(s):// stream, memoised
-        per stream URL. Returned verbatim — no download, MPRIS clients fetch
-        the remote artUrl themselves."""
+        per stream URL. The URL itself — the image isn't downloaded, the
+        MPRIS client fetches it."""
         if not stream_url.startswith(("http://", "https://")):
             return None
         return await self._cached_lookup(
@@ -536,7 +542,7 @@ class CoverFinder:
     async def _mympd_cover(self, stream_url: str) -> str | None:
         """WebradioDB cover URL from the configured myMPD for an http(s)://
         stream, memoised per stream URL. ``None`` when no myMPD is
-        configured. Returned verbatim — MPRIS clients fetch the artUrl."""
+        configured. The URL itself — the MPRIS client fetches it."""
         if not self._mympd_url or not stream_url.startswith(("http://", "https://")):
             return None
         base = self._mympd_url  # narrowed to str for the closure

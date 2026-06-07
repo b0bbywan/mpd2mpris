@@ -717,7 +717,7 @@ async def test_find_falls_through_to_step5_remote_url(
         song_file="Song.flac",
         mpd_meta={"artist": "Artist", "album": "Album"},
     ))
-    assert uri == "https://caa/front-500.jpg"  # remote URL served verbatim
+    assert uri == "https://caa/front-500.jpg"  # remote URL returned as-is, not downloaded
 
 
 @pytest.mark.asyncio
