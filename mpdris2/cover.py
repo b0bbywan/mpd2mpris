@@ -13,6 +13,11 @@ used as ``mpris:artUrl`` unchanged — never downloaded.
 5. Remote cover URL — MusicBrainz/CAA, then opt-in iTunes/Deezer; memoised
    per (artist, album). For web radio (title only) the key is first
    recovered from MusicBrainz, then Deezer.
+6. Web-radio station favicon — radio-browser, http(s):// streams.
+7. myMPD WebradioDB cover — opt-in (``[Cover] mympd_uri``), http(s):// streams.
+
+Steps 6 and 7 run concurrently; the curated WebradioDB cover (7) wins
+over the raw favicon (6) when configured.
 
 Requires MPD ≥ 0.22 for ``readpicture``.
 """
@@ -31,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, TypeVar
 
-from mpdris2 import deezer, itunes, musicbrainz
+from mpdris2 import deezer, itunes, musicbrainz, mympd, radiobrowser
 from mpdris2.translate import first, split_title
 
 logger = logging.getLogger(__name__)
@@ -116,6 +121,7 @@ class CoverFinderConfig:
     # Opt-in step-5 fallbacks, tried after the always-on MusicBrainz/CAA.
     use_itunes: bool = False
     use_deezer: bool = False
+    mympd_url: str | None = None  # myMPD base URL for step 7; None disables it
 
 
 @dataclass(frozen=True)
@@ -172,6 +178,8 @@ class CoverFinder:
         self._temp_cover: IO[bytes] | None = None
         self._url_cache: dict[tuple[str, str], str | None] = _BoundedCache()  # step 5, tagged
         self._title_cover_cache: dict[str, str | None] = _BoundedCache()  # step 5, web radio
+        self._station_cache: dict[str, str | None] = _BoundedCache()  # step 6
+        self._mympd_cache: dict[str, str | None] = _BoundedCache()  # step 7
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -242,6 +250,16 @@ class CoverFinder:
             cover = await self._remote_cover_for_title(title)
         else:
             cover = None
+        if cover:
+            return cover
+
+        # 6 + 7. Web-radio covers, queried concurrently — the curated myMPD
+        #        WebradioDB cover wins over the raw station favicon.
+        favicon, mympd_cover = await asyncio.gather(
+            self._station_favicon(req.song_file),
+            self._mympd_cover(req.song_file),
+        )
+        cover = mympd_cover or favicon
         if cover:
             return cover
 
@@ -411,6 +429,28 @@ class CoverFinder:
             return None
         cache[key] = value
         return value
+
+    # --- step 6: web-radio station favicon URL ----------------------
+    async def _station_favicon(self, stream_url: str) -> str | None:
+        """Favicon URL of the station serving an http(s):// stream."""
+        if not stream_url.startswith(("http://", "https://")):
+            return None
+        return await self._cached_lookup(
+            self._station_cache, stream_url,
+            lambda: radiobrowser.station_icon(stream_url),
+        )
+
+    # --- step 7: myMPD WebradioDB cover URL --------------------------
+    async def _mympd_cover(self, stream_url: str) -> str | None:
+        """WebradioDB cover URL from the configured myMPD for an http(s)://
+        stream. ``None`` when no myMPD is configured."""
+        if not self._mympd_url or not stream_url.startswith(("http://", "https://")):
+            return None
+        base = self._mympd_url  # narrow to str for the closure
+        return await self._cached_lookup(
+            self._mympd_cache, stream_url,
+            lambda: mympd.cover_url(base, stream_url),
+        )
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
