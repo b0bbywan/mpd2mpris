@@ -76,7 +76,6 @@ class BridgeConfig:
     is_socket: bool
     music_dir: Path | None
     cover_regex: re.Pattern[str]
-    cover_cache_dir: Path
     cdprev: bool
     notify_paused: bool
     no_reconnect: bool
@@ -158,7 +157,6 @@ class MpdMprisBridge:
             CoverFinderConfig(
                 music_dir=self.music_dir,
                 cover_regex=config.cover_regex,
-                cover_cache_dir=config.cover_cache_dir,
             )
         )
         self.bus = bus
