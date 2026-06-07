@@ -9,8 +9,9 @@ from pathlib import Path
 
 from mpdris2.cli import (
     _resolve_cdprev,
-    _resolve_cover_sources,
+    _resolve_cover_list,
     _resolve_music_dir,
+    _resolve_mympd_uri,
     _resolve_notifier_config,
     _resolve_notify,
     _resolve_notify_paused,
@@ -223,20 +224,54 @@ def test_resolve_cdprev_explicit_true() -> None:
     assert _resolve_cdprev(cfg) is True
 
 
-# --- _resolve_cover_sources ------------------------------------------------
+# --- _resolve_cover_list ---------------------------------------------------
 
-def test_resolve_cover_sources_default_empty() -> None:
+def test_resolve_cover_list_default_empty() -> None:
     cfg = configparser.ConfigParser()
-    assert _resolve_cover_sources(cfg) == ()
+    assert _resolve_cover_list(cfg, "sources") == ()
+    assert _resolve_cover_list(cfg, "stream_sources") == ()
 
 
-def test_resolve_cover_sources_ordered_list() -> None:
+def test_resolve_cover_list_ordered() -> None:
     cfg = configparser.ConfigParser()
-    cfg.read_string("[Cover]\nsources = musicbrainz, deezer\n")
-    assert _resolve_cover_sources(cfg) == ("musicbrainz", "deezer")
+    cfg.read_string("[Cover]\nsources = musicbrainz, deezer\nstream_sources = mympd, radiobrowser\n")
+    assert _resolve_cover_list(cfg, "sources") == ("musicbrainz", "deezer")
+    assert _resolve_cover_list(cfg, "stream_sources") == ("mympd", "radiobrowser")
 
 
-def test_resolve_cover_sources_normalises_separators_and_case() -> None:
+def test_resolve_cover_list_normalises_separators_and_case() -> None:
     cfg = configparser.ConfigParser()
     cfg.read_string("[Cover]\nsources = Deezer  iTunes,,musicbrainz\n")
-    assert _resolve_cover_sources(cfg) == ("deezer", "itunes", "musicbrainz")
+    assert _resolve_cover_list(cfg, "sources") == ("deezer", "itunes", "musicbrainz")
+
+
+# --- _resolve_mympd_uri ----------------------------------------------------
+
+def test_resolve_mympd_uri_default_none() -> None:
+    assert _resolve_mympd_uri(configparser.ConfigParser()) is None
+
+
+def test_resolve_mympd_uri_explicit() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[Cover]\nmympd_uri = http://host:8080\n")
+    assert _resolve_mympd_uri(cfg) == "http://host:8080"
+
+
+def test_resolve_mympd_uri_blank_is_none() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[Cover]\nmympd_uri =\n")
+    assert _resolve_mympd_uri(cfg) is None
+
+
+def test_resolve_mympd_uri_strips_surrounding_quotes() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string('[Cover]\nmympd_uri = "http://localhost:8090"\n')
+    assert _resolve_mympd_uri(cfg) == "http://localhost:8090"
+
+
+def test_resolve_mympd_uri_without_scheme_disabled(caplog) -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[Cover]\nmympd_uri = localhost:8080\n")
+    with caplog.at_level("ERROR"):
+        assert _resolve_mympd_uri(cfg) is None
+    assert "no http(s):// scheme" in caplog.text
