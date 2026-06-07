@@ -1,8 +1,42 @@
 # mpDris2
 
+[![Build](https://github.com/b0bbywan/mpDris2/actions/workflows/build.yml/badge.svg)](https://github.com/b0bbywan/mpDris2/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/b0bbywan/mpDris2)](https://github.com/b0bbywan/mpDris2/releases)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![MPD](https://img.shields.io/badge/MPD-F18D00)](https://www.musicpd.org/)
+[![APT](https://img.shields.io/badge/apt-odio.love-A80030)](https://apt.odio.love)
+
 mpDris2 provide MPRIS 2 support to mpd (Music Player Daemon).
 
-mpDris2 is run in the user session and monitors a local or distant mpd server.
+mpDris2 runs in the user session and monitors a local or distant mpd server.
+
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Build a .deb](#build-a-deb)
+- [Cover art](#cover-art)
+- [Used in](#used-in)
+- [Contributing](#contributing)
+- [Credits](#credits)
+- [License](#license)
+
+## Features
+
+- Full MPRIS 2 interface (playback control, metadata, seek, volume) for
+  any MPRIS client: `playerctl`, media keys, desktop applets.
+- Pure asyncio + dbus-fast: single event loop, no threads, no GLib.
+- Local or remote MPD, with automatic reconnect and capability probing.
+- A 7-step cover-art pipeline that resolves artwork for tagged files,
+  CD (CUE/cdda) tracks and web-radio streams (see [Cover art](#cover-art)).
+- Optional remote cover sources: MusicBrainz/CAA, iTunes, Deezer,
+  Radio Browser, myMPD WebradioDB.
+- systemd user unit with D-Bus activation: starts on the first MPRIS call.
+- Light footprint: only `python-mpd2` and `dbus-fast` at runtime.
 
 # Install
 
@@ -76,34 +110,29 @@ password =
 music_dir = /media/music/
 # Override the default cover-file regex; useful for non-standard names.
 #cover_regex = ^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$
-# Where the downloaded-covers cache lives (defaults to $XDG_CACHE_HOME/mpDris2/).
-#cover_cache_dir =
+
+[Cover]
+# Remote cover-art sources (pipeline step 5), as an ordered, comma-separated
+# list — the order is the lookup priority, and a source not listed is off.
+# Valid: musicbrainz, itunes, deezer. Unset = none. MusicBrainz/CAA needs the
+# [cover] extra (see below); iTunes/Deezer don't.
+#sources = musicbrainz, itunes, deezer
+# Web-radio stream cover sources (steps 6-7), same ordered-list rule. Valid:
+# radiobrowser (station favicon), mympd (myMPD WebradioDB). Unset = none.
+#stream_sources = mympd, radiobrowser
+# Base URL of a myMPD instance — the data the 'mympd' stream source needs.
+# Listing 'mympd' above without this is a no-op.
+#mympd_uri = http://localhost:8080
 
 [Bling]
-# Send desktop notifications on track change.
-notify = True
-# Also notify when the player is paused (default: only when playing).
-notify_paused = False
 # CD-like Previous: if elapsed >= 3 s, restart the current track instead
 # of jumping to the previous one.
 cdprev = False
-
-[Notify]
-# Urgency: 0 low, 1 normal, 2 critical.
-urgency = 1
-# Bubble lifetime in ms — -1 lets the notification server decide.
-timeout = -1
-# Templates for the bubble. Empty = built-in default.
-# Placeholders: %album% %title% %id% %time% %timeposition% %date% %track%
-#               %disc% %artist% %albumartist% %composer% %genre% %file%
-summary =
-body =
-paused_summary =
-paused_body =
 ```
 
-With `notify = True`, mpDris2 also raises a brief bubble when playback
-stops, and when the MPD connection drops or comes back.
+mpDris2 does not raise its own desktop notifications: modern desktops
+(GNOME, KDE, sway with `playerctld`, …) surface track changes straight
+from the MPRIS metadata mpDris2 exports.
 
 # Architecture
 
@@ -125,8 +154,6 @@ make deb            # dpkg-buildpackage -b -us -uc (Debian toolchain)
 make clean          # drop build/, dist/, *.egg-info
 make version        # print the Python version (from __init__.py)
 make sync-deb       # bump debian/changelog to match __init__.py
-make i18n-extract   # refresh po/mpdris2.pot from source
-make i18n-compile   # compile po/*.po into the runtime locale tree
 ```
 
 `mpdris2/__init__.py` is the single source of truth for the version;
@@ -152,4 +179,55 @@ step that yields a usable image wins; later steps are skipped.
 | 2 | FS regex scan | `cover_regex` match in the song's directory (default matches `cover.*`, `folder.*`, `album.*`, `front.*`) | `file://` URI of the matched file (RFC-3986 percent-encoded) | A non-standardly-named cover sits next to the audio file (local FS only) |
 | 3 | MPD `albumart` | `cover.{png,jpg,jxl,webp}` in the song's directory (resolved server-side by MPD) | `file:///tmp/cover-*.{jpg,png,…}` | Remote MPD, or step 2 missed (standard name only) |
 | 4 | CUE/cdda fallback | `cover_regex` match next to the loaded `.cue` playlist (FS scan), falling back to MPD `albumart` (which server-side resolves `cover.{png,jpg,jxl,webp}`) when music_dir isn't locally accessible | `file://` URI of the matched file (local FS) or `file:///tmp/cover-*` (remote MPD) | The song is a CUE virtual track (cdda://, http://, …) and the CUE's own directory holds a cover |
-| 5 | XDG cover cache | `$XDG_CACHE_HOME/mpDris2/{artist}-{album}.{jpg,png,…}` | `file://` URI of the cached file | Earlier steps failed and a previous run (or the optional MusicBrainz fallback) populated the cache |
+| 5 | Remote cover URL | MusicBrainz/CAA, iTunes, Deezer — whichever are listed in `[Cover] sources`, in that priority order. For web radio (title only) each source resolves the album within its own catalogue | Remote image **URL** (image not downloaded) | Earlier steps failed, a source is enabled and has cover art for the `(artist, album)` |
+| 6 | Station favicon | Community Radio Browser lookup of the stream URL (`radiobrowser` in `[Cover] stream_sources`) | Station favicon **URL** (image not downloaded) | An `http(s)://` web-radio stream whose station has a favicon |
+| 7 | myMPD WebradioDB | `MYMPD_API_WEBRADIODB_RADIO_GET_BY_URI` against the myMPD at `[Cover] mympd_uri` (`mympd` in `[Cover] stream_sources`) | WebradioDB cover **URL** (image not downloaded) | A web-radio stream that the configured myMPD's WebradioDB knows |
+
+Step 5's MusicBrainz/CAA lookup needs the optional `[cover]` extra
+(`pip install '.[cover]'`, or the `python3-musicbrainzngs` +
+`python3-rapidfuzz` packages); the iTunes, Deezer and myMPD fallbacks are
+stdlib-only. Steps 5–7 return a remote URL used as `mpris:artUrl` — the
+MPRIS client fetches it, nothing is downloaded or cached to disk.
+
+# Used in
+
+- [odio](https://odio.love/)
+  ([odios](https://github.com/b0bbywan/odios)): an open-source,
+  self-hosted multi-protocol audio streamer that turns a Raspberry Pi or
+  Debian box into a hi-fi network receiver. It bundles Bluetooth A2DP,
+  AirPlay, Snapcast multi-room, UPnP/DLNA, Spotify Connect, automatic CD
+  playback and web radio on top of MPD. Odio runs mpDris2 to expose its
+  MPD over MPRIS2, including the cover pipeline that resolves artwork for
+  CD and web-radio playback.
+
+# Contributing
+
+Issues and pull requests are welcome on
+[GitHub](https://github.com/b0bbywan/mpDris2/issues).
+
+```sh
+git clone https://github.com/b0bbywan/mpDris2.git
+cd mpDris2
+pip install -e '.[dev,cover]'   # dev tooling + optional cover deps
+make lint                       # ruff + mypy
+make test                       # pytest
+```
+
+Run `make lint` and `make test` before opening a PR, and keep commits
+focused (one logical change each). Module layout and responsibilities
+are documented in `CLAUDE.md`.
+
+Filing a bug? Run the daemon with `mpDris2 -v` and paste the verbose log
+into the issue.
+
+# Credits
+
+This is an asyncio + dbus-fast rewrite of the original
+[mpDris2](https://github.com/eonpatapon/mpDris2), whose authors are Erik
+Karlsson, Jean-Philippe Braun, Christoph Reiter and Mantas Mikulėnas.
+The Debian packaging traces back to Simon McVittie.
+
+# License
+
+mpDris2 is licensed under the GNU General Public License v3.0 or later
+(GPL-3.0-or-later). See [COPYING](COPYING) for the full text.

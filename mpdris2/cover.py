@@ -493,12 +493,9 @@ class CoverFinder:
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
         ext = _MIME_EXT.get(mime, ".jpg")
-        # delete=True cleans up on normal interpreter shutdown via GC,
-        # and the daemon calls ``_discard_temp`` explicitly on exit.
-        # Hard kills (SIGKILL, OOM) leak the file until /tmp is purged
-        # — acceptable since covers are a few KB on tmpfs. Lifetime
-        # extends past this function (caller holds via
-        # ``self._temp_cover``), hence the SIM115 silence.
+        # delete=True is fine: _discard_temp closes it on exit, a hard kill
+        # only leaks a few KB on tmpfs. The caller holds it past this function
+        # (self._temp_cover), hence the SIM115 silence.
         tmp = tempfile.NamedTemporaryFile(prefix="cover-", suffix=ext)  # noqa: SIM115
         tmp.write(data)
         tmp.flush()
