@@ -169,6 +169,12 @@ def _resolve_cdprev(cfg: configparser.ConfigParser) -> bool:
     return cfg.getboolean("Bling", "cdprev", fallback=False)
 
 
+def _resolve_cover_backend(cfg: configparser.ConfigParser, name: str) -> bool:
+    """Opt-in remote cover fallback (``[Cover] itunes`` / ``deezer``),
+    off by default."""
+    return cfg.getboolean("Cover", name, fallback=False)
+
+
 def build_bridge_config(
     cfg: configparser.ConfigParser, args: argparse.Namespace,
 ) -> BridgeConfig:
@@ -181,6 +187,8 @@ def build_bridge_config(
         is_socket=is_socket,
         music_dir=_resolve_music_dir(cfg, args),
         cover_regex=_resolve_cover_regex(cfg),
+        cover_itunes=_resolve_cover_backend(cfg, "itunes"),
+        cover_deezer=_resolve_cover_backend(cfg, "deezer"),
         cdprev=_resolve_cdprev(cfg),
         notify_paused=_resolve_notify_paused(cfg),
         no_reconnect=args.no_reconnect,
