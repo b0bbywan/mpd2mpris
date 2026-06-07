@@ -169,6 +169,14 @@ def _resolve_cdprev(cfg: configparser.ConfigParser) -> bool:
     return cfg.getboolean("Bling", "cdprev", fallback=False)
 
 
+def _resolve_cover_sources(cfg: configparser.ConfigParser) -> tuple[str, ...]:
+    """Ordered, comma/space-separated step-5 cover sources (``[Cover]
+    sources``); empty when unset. Names are lowercased; cover.py validates
+    them and ignores any it doesn't know."""
+    raw = cfg.get("Cover", "sources", fallback="")
+    return tuple(s for s in re.split(r"[,\s]+", raw.lower().strip()) if s)
+
+
 def build_bridge_config(
     cfg: configparser.ConfigParser, args: argparse.Namespace,
 ) -> BridgeConfig:
@@ -181,6 +189,7 @@ def build_bridge_config(
         is_socket=is_socket,
         music_dir=_resolve_music_dir(cfg, args),
         cover_regex=_resolve_cover_regex(cfg),
+        cover_sources=_resolve_cover_sources(cfg),
         cdprev=_resolve_cdprev(cfg),
         notify_paused=_resolve_notify_paused(cfg),
         no_reconnect=args.no_reconnect,
