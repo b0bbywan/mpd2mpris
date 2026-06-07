@@ -30,6 +30,9 @@ parsing/transferring for that guarantee.
    (only a title, no album tag) the artist+album are first recovered
    from MusicBrainz, then Deezer as a fallback, so this path can key on
    them.
+6. Web-radio station favicon URL — radio-browser, for http(s):// streams.
+7. myMPD WebradioDB cover URL — opt-in last resort for http(s)://
+   streams, when ``[Cover] mympd_uri`` points at a myMPD instance.
 
 Requires MPD ≥ 0.22 (for ``readpicture``); the daemon won't error out
 on older servers but covers for non-standardly-named files won't work.
@@ -49,7 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, TypeVar
 
-from mpdris2 import deezer, itunes, musicbrainz
+from mpdris2 import deezer, itunes, musicbrainz, mympd, radiobrowser
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
@@ -188,6 +191,7 @@ class CoverFinder:
         self._can_readpicture = config.can_readpicture
         self._can_albumart = config.can_albumart
         self._use_deezer = config.use_deezer
+        self._mympd_url = config.mympd_url
         # Remote cover-URL sources, queried concurrently with the
         # highest-priority hit winning: MusicBrainz/CAA (canonical, always
         # on) first, then the opt-in, broader-coverage, no-auth fallbacks.
@@ -205,6 +209,11 @@ class CoverFinder:
         # (artist, album) -> remote cover URL | None (step 5), memoised so an
         # album played track-by-track isn't re-looked-up each time.
         self._url_cache: dict[tuple[str, str], str | None] = _BoundedCache()
+        # stream URL -> station favicon URL | None (step 6), memoised so the
+        # station isn't re-queried on every track.
+        self._station_cache: dict[str, str | None] = _BoundedCache()
+        # stream URL -> myMPD WebradioDB cover URL | None (step 7), memoised.
+        self._mympd_cache: dict[str, str | None] = _BoundedCache()
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -279,6 +288,17 @@ class CoverFinder:
         # 5. Remote cover URL (MusicBrainz/CAA, iTunes, Deezer) — the image
         #    isn't downloaded, the MPRIS client fetches the URL itself.
         cover = await self._remote_cover(artist, album)
+        if cover:
+            return cover
+
+        # 6 + 7. Web-radio stream covers — the radio-browser station favicon
+        #        and the opt-in myMPD WebradioDB cover, queried concurrently
+        #        (favicon preferred). Both return a URL, not a downloaded image.
+        favicon, mympd_cover = await asyncio.gather(
+            self._station_favicon(req.song_file),
+            self._mympd_cover(req.song_file),
+        )
+        cover = favicon or mympd_cover
         if cover:
             return cover
 
@@ -469,6 +489,26 @@ class CoverFinder:
                 url = res  # first (highest-priority) hit
         return url, url is not None or not errored
 
+    async def _cached_lookup(
+        self,
+        cache: dict[_K, _V | None],
+        key: _K,
+        lookup: Callable[[], Awaitable[_V | None]],
+    ) -> _V | None:
+        """Serve ``key`` from ``cache``, else run a single-source ``lookup()``
+        and store it. A hit or a clean miss is cached; a transient error
+        (``lookup`` raises) is logged and returned as ``None`` without
+        caching, so it's retried next time."""
+        if key in cache:
+            return cache[key]
+        try:
+            value = await lookup()
+        except Exception as e:
+            logger.debug("cover: lookup for %s failed: %r", key, e)
+            return None
+        cache[key] = value
+        return value
+
     async def _cached_definitive(
         self,
         cache: dict[_K, _V | None],
@@ -485,6 +525,31 @@ class CoverFinder:
         if definitive:
             cache[key] = value
         return value
+
+    # --- step 6: web-radio station favicon URL ----------------------
+    async def _station_favicon(self, stream_url: str) -> str | None:
+        """Favicon URL of the station serving an http(s):// stream, memoised
+        per stream URL. The URL itself — the image isn't downloaded, the
+        MPRIS client fetches it."""
+        if not stream_url.startswith(("http://", "https://")):
+            return None
+        return await self._cached_lookup(
+            self._station_cache, stream_url,
+            lambda: radiobrowser.station_icon(stream_url),
+        )
+
+    # --- step 7: myMPD WebradioDB cover URL --------------------------
+    async def _mympd_cover(self, stream_url: str) -> str | None:
+        """WebradioDB cover URL from the configured myMPD for an http(s)://
+        stream, memoised per stream URL. ``None`` when no myMPD is
+        configured. The URL itself — the MPRIS client fetches it."""
+        if not self._mympd_url or not stream_url.startswith(("http://", "https://")):
+            return None
+        base = self._mympd_url  # narrowed to str for the closure
+        return await self._cached_lookup(
+            self._mympd_cache, stream_url,
+            lambda: mympd.cover_url(base, stream_url),
+        )
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
