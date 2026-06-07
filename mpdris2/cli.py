@@ -169,12 +169,28 @@ def _resolve_cdprev(cfg: configparser.ConfigParser) -> bool:
     return cfg.getboolean("Bling", "cdprev", fallback=False)
 
 
-def _resolve_cover_sources(cfg: configparser.ConfigParser) -> tuple[str, ...]:
-    """Ordered, comma/space-separated step-5 cover sources (``[Cover]
-    sources``); empty when unset. Names are lowercased; cover.py validates
-    them and ignores any it doesn't know."""
-    raw = cfg.get("Cover", "sources", fallback="")
+def _resolve_cover_list(cfg: configparser.ConfigParser, key: str) -> tuple[str, ...]:
+    """Ordered, comma/space-separated source names from ``[Cover] <key>``
+    (``sources`` for step 5, ``stream_sources`` for steps 6-7); empty when
+    unset. Names are lowercased; cover.py validates and ignores unknown ones."""
+    raw = cfg.get("Cover", key, fallback="")
     return tuple(s for s in re.split(r"[,\s]+", raw.lower().strip()) if s)
+
+
+def _resolve_mympd_uri(cfg: configparser.ConfigParser) -> str | None:
+    """Base URL of a myMPD instance for the WebradioDB cover fallback
+    (``[Cover] mympd_uri``); ``None`` (disabled) when unset. Surrounding
+    quotes/whitespace are stripped — configparser keeps them literal, and
+    a quoted URL would otherwise yield an ``unknown url type`` error.
+    A scheme-less value is rejected (disabled) with an error, since urllib
+    would otherwise raise ``unknown url type`` on every silent lookup."""
+    raw = cfg.get("Cover", "mympd_uri", fallback="").strip().strip("'\"").strip()
+    if not raw:
+        return None
+    if not raw.startswith(("http://", "https://")):
+        logger.error("[Cover] mympd_uri %r has no http(s):// scheme; disabling myMPD", raw)
+        return None
+    return raw
 
 
 def build_bridge_config(
@@ -189,7 +205,9 @@ def build_bridge_config(
         is_socket=is_socket,
         music_dir=_resolve_music_dir(cfg, args),
         cover_regex=_resolve_cover_regex(cfg),
-        cover_sources=_resolve_cover_sources(cfg),
+        cover_sources=_resolve_cover_list(cfg, "sources"),
+        cover_stream_sources=_resolve_cover_list(cfg, "stream_sources"),
+        cover_mympd_uri=_resolve_mympd_uri(cfg),
         cdprev=_resolve_cdprev(cfg),
         notify_paused=_resolve_notify_paused(cfg),
         no_reconnect=args.no_reconnect,

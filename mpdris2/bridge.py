@@ -77,6 +77,8 @@ class BridgeConfig:
     music_dir: Path | None
     cover_regex: re.Pattern[str]
     cover_sources: tuple[str, ...]
+    cover_stream_sources: tuple[str, ...]
+    cover_mympd_uri: str | None
     cdprev: bool
     notify_paused: bool
     no_reconnect: bool
@@ -169,6 +171,8 @@ class MpdMprisBridge:
                 music_dir=self.music_dir,
                 cover_regex=config.cover_regex,
                 cover_sources=config.cover_sources,
+                stream_sources=config.cover_stream_sources,
+                mympd_url=config.cover_mympd_uri,
             )
         )
         self.bus = bus
