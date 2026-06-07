@@ -1,4 +1,4 @@
-.TH MPDRIS2 1 "May 2026" "" "D-Bus services"
+.TH MPDRIS2 1 "June 2026" "" "D-Bus services"
 .\" Copyright © 2012-2016 Simon McVittie
 .\" Copyright © 2026 Mathieu Réquillart (asyncio / dbus-fast rewrite)
 .\" It may be distributed under the same terms as mpDris2 itself.
@@ -12,12 +12,19 @@ mpDris2 \- media player interface (MPRIS2) bridge for MPD
 is an implementation of the MPRIS2 media player interface as a
 client for MPD, allowing MPRIS2 clients to control MPD and observe its
 track changes via a standard D-Bus interface. The daemon runs entirely
-on asyncio (python-mpd2 + dbus-fast); track-change notifications are
-sent via libnotify when a notification daemon is available.
+on asyncio (python-mpd2 + dbus-fast).
 .PP
 It is normally run automatically via D-Bus service activation, or as a
-systemd user unit. On systems following the freedesktop.org Desktop
-Application Autostart Specification it will be run on login.
+systemd user unit.
+.PP
+On each track change mpDris2 resolves cover art off the critical path and
+exposes it as \fImpris:artUrl\fR. It tries, in order: the embedded
+picture (MPD \fBreadpicture\fR), a regex match in the song's directory,
+MPD \fBalbumart\fR, a cover beside a CUE/cdda playlist, and \(em when
+configured \(em remote cover-art URLs (MusicBrainz/CAA, iTunes, Deezer)
+and, for web-radio streams, the station favicon (radio-browser) or a
+myMPD WebradioDB cover. Remote sources are opt-in and only ever yield a
+URL; the images themselves are never downloaded.
 .SH CONFIGURATION
 \fBmpDris2\fR is normally configured via the file
 \fIXDG_CONFIG_HOME\fB/mpDris2/mpDris2.conf\fR (typically
@@ -62,9 +69,5 @@ Set the hostname of the MPD server, overriding the configuration file.
 .TP
 \fBMPD_PORT\fR=\fIPORT\fR
 Set the port number of the MPD server, overriding the configuration file.
-.TP
-\fBXDG_MUSIC_DIR\fR=\fIDIRECTORY\fR
-Used to find the default music directory if not specified in the
-configuration file or as a command-line option.
 .SH SEE ALSO
 .BR mpd (1)
