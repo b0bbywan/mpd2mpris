@@ -1,33 +1,20 @@
 """Cover-art resolution: async pipeline.
 
-Ordered authoritative-first — the picture inside the audio file is
-guaranteed to match the track, whereas a ``cover.jpg`` in the song's
-directory could be stale or wrong. We accept the extra cost of
-parsing/transferring for that guarantee.
+Ordered authoritative-first — the embedded picture is guaranteed to match
+the track, a ``cover.jpg`` in the directory might not. Steps 1-4 yield
+local bytes (→ tempfile) or a ``file://``; steps 5-7 yield a remote URL
+used as ``mpris:artUrl`` unchanged — never downloaded.
 
-1. MPD ``readpicture`` — embedded picture in the audio file. MPD does
-   the format-specific parsing server-side, works for both local and
-   remote MPD. Bytes → tempfile.
-2. Filesystem regex match in the song's directory — only when we have
-   local FS access. Returns the file's URI directly, no copying. The
-   cheapest step, but ``cover.jpg`` may not match the track exactly.
-3. MPD ``albumart`` — MPD resolves ``cover.{png,jpg,jxl,webp}`` from
-   the song's directory server-side and ships the bytes. Useful for
-   remote MPD or when step 2's regex missed a standard-named cover.
-   Bytes → tempfile.
-4. CUE/cdda fallback — when ``song_file`` is a virtual reference
-   (``cdda://Disc/Track01`` or a CUE playlist track) the audio file
-   itself has no on-disk cover; look next to the loaded ``.cue``
-   playlist instead. Tries the local FS regex first (no temp-file
-   copy, picks up names like ``folder.jpg``), then falls back to MPD
-   ``albumart``.
-5. XDG cover cache (``$XDG_CACHE_HOME/mpDris2/{artist}-{album}.jpg``).
+1. MPD ``readpicture`` — embedded picture, parsed server-side.
+2. Filesystem regex in the song's directory (local FS only).
+3. MPD ``albumart`` — ``cover.{png,jpg,jxl,webp}``, resolved server-side.
+4. CUE/cdda fallback — for virtual tracks (``cdda://``, ``sheet.cue/trackNNNN``)
+   with no on-disk cover, look next to the loaded ``.cue`` (FS, then albumart).
+5. Remote cover URL — MusicBrainz/CAA, then opt-in iTunes/Deezer; memoised
+   per (artist, album). For web radio (title only) the key is first
+   recovered from MusicBrainz, then Deezer.
 
-The optional MusicBrainz / Cover Art Archive fallback (PR 5) will slot
-in as a sixth step.
-
-Requires MPD ≥ 0.22 (for ``readpicture``); the daemon won't error out
-on older servers but covers for non-standardly-named files won't work.
+Requires MPD ≥ 0.22 for ``readpicture``.
 """
 
 from __future__ import annotations
@@ -35,23 +22,22 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import re
 import tempfile
 import urllib.parse
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, TypeVar
 
+from mpdris2 import deezer, itunes, musicbrainz
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
 
-# User-side cover cache. Follows the XDG cache spec; PR 5
-# (MusicBrainz fallback) writes its downloads here and step 4 picks
-# them up on the next track.
-DEFAULT_COVER_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "mpDris2"
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 DEFAULT_COVER_REGEX = re.compile(
     r"^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$",
@@ -86,11 +72,9 @@ def _detect_mime(data: bytes) -> str | None:
 
 _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 
-# A CUE virtual track surfaces as ``path/to/sheet.cue/trackNNNN`` — the
-# audio it represents lives elsewhere (stream URL, raw CD, separate
-# audio file referenced by the sheet), so MPD's readpicture/albumart on
-# this URI always fails with ``Unrecognized URI``. The shape itself is a
-# reliable marker: regular tracks never look like this.
+# A CUE virtual track is ``path/to/sheet.cue/trackNNNN`` — its audio lives
+# elsewhere, so MPD's readpicture/albumart fail with ``Unrecognized URI``.
+# Regular tracks never match this shape.
 _VIRTUAL_CUE_TRACK_RE = re.compile(r"\.cue/track\d+$", re.I)
 
 
@@ -127,9 +111,14 @@ class CoverFinderConfig:
 
     music_dir: Path | None = None
     cover_regex: re.Pattern[str] = DEFAULT_COVER_REGEX
-    cover_cache_dir: Path = DEFAULT_COVER_CACHE_DIR
     can_readpicture: bool = False
     can_albumart: bool = False
+    # Opt-in step-5 fallbacks, tried after the always-on MusicBrainz/CAA.
+    use_itunes: bool = False
+    use_deezer: bool = False
+    # Base URL of a myMPD instance for the WebradioDB cover fallback (step
+    # 7); empty/None disables it.
+    mympd_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +135,24 @@ class SongLookup:
     last_loaded_playlist: str = ""
 
 
+# Per-cache entry cap — covers/keys are one network call to re-resolve.
+_CACHE_MAX = 256
+
+
+class _BoundedCache(OrderedDict):
+    """Insertion-ordered dict capped at ``maxsize``, evicting the oldest on
+    overflow. Stores ``None`` (a miss), so probe membership with ``in``."""
+
+    def __init__(self, maxsize: int = _CACHE_MAX) -> None:
+        super().__init__()
+        self._maxsize = maxsize
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        super().__setitem__(key, value)
+        if len(self) > self._maxsize:
+            self.popitem(last=False)
+
+
 class CoverFinder:
     """Owns the per-track temp file for embedded covers + the MPD
     capability flags (``readpicture`` / ``albumart``)."""
@@ -154,11 +161,20 @@ class CoverFinder:
         config = config or CoverFinderConfig()
         self._music_dir = config.music_dir
         self._cover_regex = config.cover_regex
-        self._cache_dir = config.cover_cache_dir
         self._can_readpicture = config.can_readpicture
         self._can_albumart = config.can_albumart
+        self._use_deezer = config.use_deezer
+        # Step-5 cover sources, MusicBrainz/CAA first then the opt-in
+        # fallbacks. Each: ``cover_url(artist, album)``.
+        self._cover_sources: list[Any] = [musicbrainz]
+        if config.use_itunes:
+            self._cover_sources.append(itunes)
+        if config.use_deezer:
+            self._cover_sources.append(deezer)
         self._temp_song_uri: str | None = None
         self._temp_cover: IO[bytes] | None = None
+        self._title_key_cache: dict[str, tuple[str, str] | None] = _BoundedCache()
+        self._url_cache: dict[tuple[str, str], str | None] = _BoundedCache()  # step 5
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -186,12 +202,9 @@ class CoverFinder:
                 return Path(self._temp_cover.name).as_uri()
             self._discard_temp()
 
-        # readpicture/albumart need a song_file that MPD can resolve to
-        # actual audio bytes. Skip URI schemes (cdda://, http://, … —
-        # readpicture stalls the MPD connection on these, commit
-        # 234d6da) and CUE virtual tracks (``sheet.cue/trackNNNN`` —
-        # MPD rejects them with ``Unrecognized URI``). Step 4 picks up
-        # both cases.
+        # readpicture/albumart need real audio bytes: skip URI schemes
+        # (readpicture stalls the MPD connection on these) and CUE virtual
+        # tracks. Step 4 picks up both.
         can_query_picture = (
             bool(req.song_file) and not _has_uri_scheme(req.song_file) and not _is_virtual_cue_track(req.song_file)
         )
@@ -208,29 +221,29 @@ class CoverFinder:
         if cover:
             return cover
 
-        # 3. MPD albumart — MPD reads cover.{jpg,png,…} from the song's
-        #    directory. Useful for remote MPD or when step 2's regex
-        #    missed.
+        # 3. MPD albumart — cover.{jpg,png,…} from the song's directory.
         if can_query_picture:
             data = await self._try_albumart(req.client, req.song_file)
             cover = self._materialise_bytes(req.song_uri, data, req.song_file)
             if cover:
                 return cover
 
-        # 4. CUE/cdda fallback — the song_file is a virtual reference
-        #    (``cdda://Disc/Track01``, ``playlist.cue/track0001``) with
-        #    no real on-disk file. Look for a cover next to the loaded
-        #    .cue playlist (FS scan first, then MPD ``albumart``).
+        # 4. CUE/cdda fallback — virtual track, look next to the .cue.
         if req.mpd_meta:
             cover = await self._cue_fallback(req)
             if cover:
                 return cover
 
-        # 5. Downloaded-covers cache (XDG).
-        cover = self._lookup_downloads_cache(req.mpd_meta)
+        # (artist, album) key: from tags, or recovered from MusicBrainz/Deezer
+        # for a title-only web-radio stream.
+        artist, album = await self._resolve_key(req.mpd_meta)
+
+        # 5. Remote cover URL (MusicBrainz/CAA, iTunes, Deezer).
+        cover = await self._remote_cover(artist, album)
         if cover:
             return cover
 
+        logger.debug("cover: no cover found for %s", req.song_uri)
         return None
 
     # --- step 1 + 3 helpers: MPD protocol ----------------------------
@@ -245,14 +258,9 @@ class CoverFinder:
         return await _fetch_binary(client.albumart, path)
 
     async def _cue_fallback(self, req: SongLookup) -> str | None:
-        """When ``song_file`` is a CUE virtual track (cdda://, http://,
-        …) the audio file itself has no on-disk cover and MPD's
-        ``albumart`` on the song path fails. The only useful fallback
-        is the directory holding the CUE itself — that's where the
-        cover typically lives. Try a local FS regex scan first (no
-        temp-file copy, picks up non-standard names like
-        ``folder.jpg``); on failure ask MPD's ``albumart`` to resolve
-        ``cover.{png,jpg,jxl,webp}`` server-side."""
+        """A CUE virtual track has no on-disk cover; look in the directory
+        holding the ``.cue`` instead — FS regex scan first (picks up names
+        like ``folder.jpg``), then MPD ``albumart``."""
         cue_dir = self._resolve_cue_dir(req)
         if not cue_dir:
             return None
@@ -260,9 +268,7 @@ class CoverFinder:
             cover = await self._scan_song_dir(self._music_dir / cue_dir)
             if cover:
                 return cover
-        # MPD's albumart command scans the file's parent directory
-        # server-side for cover.{png,jpg,jxl,webp} — one call is
-        # enough, the path-suffix we pass is just a directory hint.
+        # albumart scans the parent dir server-side; the suffix is just a hint.
         data = await self._try_albumart(req.client, str(cue_dir / "cover"))
         return self._materialise_bytes(req.song_uri, data, req.song_file)
 
@@ -340,17 +346,90 @@ class CoverFinder:
 
         return await asyncio.to_thread(_scan)
 
-    # --- step 5: downloaded-covers cache ----------------------------
-    def _lookup_downloads_cache(self, mpd_meta: dict) -> str | None:
+    # --- (artist, album) key resolution -----------------------------
+    async def _resolve_key(self, mpd_meta: dict) -> tuple[str, str]:
+        """The (artist, album) the cover lookups key on: from the tags, or
+        — for a title-only web-radio stream — recovered from MusicBrainz then
+        Deezer. Cached per title so a repeat play resolves the same way."""
         artist = first(mpd_meta.get("artist"))
         album = first(mpd_meta.get("album"))
-        if not artist or not album:
-            return None
+        if artist and album:
+            return artist, album
+        title = first(mpd_meta.get("title"))
+        if not title:
+            return artist, album
+        key = await self._cached_definitive(
+            self._title_key_cache, title,
+            lambda: self._resolve_title(title),
+        )
+        return key or (artist, album)
 
-        # ``/`` would escape ``_cache_dir`` (e.g. "AC/DC").
-        safe_name = f"{artist}-{album}.jpg".replace("/", "_")
-        path = self._cache_dir / safe_name
-        return path.as_uri() if path.exists() else None
+    async def _resolve_title(self, title: str) -> tuple[tuple[str, str] | None, bool]:
+        """Resolve a web-radio title to (artist, album) from MusicBrainz, then
+        Deezer if enabled. Returns ``(key, definitive)``; ``definitive`` is
+        False when a source errored and none resolved (caller won't cache)."""
+        sources: list[tuple[str, Callable[[str], Awaitable[tuple[str, str] | None]]]] = [
+            ("musicbrainz", musicbrainz.resolve_album),
+        ]
+        if self._use_deezer:
+            sources.append(("deezer", deezer.resolve_album))
+        results = await asyncio.gather(*(fn(title) for _, fn in sources), return_exceptions=True)
+        key: tuple[str, str] | None = None
+        errored = False
+        for (name, _fn), res in zip(sources, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.debug("cover: %s resolve failed for %r: %r", name, title, res)
+                errored = True
+            elif res and key is None:
+                key = res  # first (highest-priority) hit
+        return key, key is not None or not errored
+
+    # --- step 5: remote cover URL -----------------------------------
+    async def _remote_cover(self, artist: str, album: str) -> str | None:
+        """First cover URL from MusicBrainz/iTunes/Deezer for an album.
+        ``None`` when artist/album is missing or no source has it."""
+        if not artist or not album:
+            logger.debug("cover: no remote key (artist=%r album=%r)", artist, album)
+            return None
+        return await self._cached_definitive(
+            self._url_cache, (artist, album),
+            lambda: self._lookup_cover_url(artist, album),
+        )
+
+    async def _lookup_cover_url(self, artist: str, album: str) -> tuple[str | None, bool]:
+        """Query the cover sources concurrently; return the MusicBrainz-first
+        hit as ``(url, definitive)``. ``definitive`` is False when a source
+        errored and none yielded a URL (caller won't cache)."""
+        results = await asyncio.gather(
+            *(source.cover_url(artist, album) for source in self._cover_sources),
+            return_exceptions=True,
+        )
+        url: str | None = None
+        errored = False
+        for source, res in zip(self._cover_sources, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.debug("cover: %s failed for %r / %r: %r", source.__name__, artist, album, res)
+                errored = True
+            elif res and url is None:
+                logger.debug("cover: %s -> %s", source.__name__, res)
+                url = res  # first (highest-priority) hit
+        return url, url is not None or not errored
+
+    async def _cached_definitive(
+        self,
+        cache: dict[_K, _V | None],
+        key: _K,
+        compute: Callable[[], Awaitable[tuple[_V | None, bool]]],
+    ) -> _V | None:
+        """Like ``_cached_lookup`` but ``compute()`` returns
+        ``(value, definitive)``; only a ``definitive`` result is cached, so a
+        partial failure (a source errored) is retried."""
+        if key in cache:
+            return cache[key]
+        value, definitive = await compute()
+        if definitive:
+            cache[key] = value
+        return value
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
