@@ -76,34 +76,29 @@ password =
 music_dir = /media/music/
 # Override the default cover-file regex; useful for non-standard names.
 #cover_regex = ^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$
-# Where the downloaded-covers cache lives (defaults to $XDG_CACHE_HOME/mpDris2/).
-#cover_cache_dir =
+
+[Cover]
+# Remote cover-art sources (pipeline step 5), as an ordered, comma-separated
+# list — the order is the lookup priority, and a source not listed is off.
+# Valid: musicbrainz, itunes, deezer. Unset = none. MusicBrainz/CAA needs the
+# [cover] extra (see below); iTunes/Deezer don't.
+#sources = musicbrainz, itunes, deezer
+# Web-radio stream cover sources (steps 6-7), same ordered-list rule. Valid:
+# radiobrowser (station favicon), mympd (myMPD WebradioDB). Unset = none.
+#stream_sources = mympd, radiobrowser
+# Base URL of a myMPD instance — the data the 'mympd' stream source needs.
+# Listing 'mympd' above without this is a no-op.
+#mympd_uri = http://localhost:8080
 
 [Bling]
-# Send desktop notifications on track change.
-notify = True
-# Also notify when the player is paused (default: only when playing).
-notify_paused = False
 # CD-like Previous: if elapsed >= 3 s, restart the current track instead
 # of jumping to the previous one.
 cdprev = False
-
-[Notify]
-# Urgency: 0 low, 1 normal, 2 critical.
-urgency = 1
-# Bubble lifetime in ms — -1 lets the notification server decide.
-timeout = -1
-# Templates for the bubble. Empty = built-in default.
-# Placeholders: %album% %title% %id% %time% %timeposition% %date% %track%
-#               %disc% %artist% %albumartist% %composer% %genre% %file%
-summary =
-body =
-paused_summary =
-paused_body =
 ```
 
-With `notify = True`, mpDris2 also raises a brief bubble when playback
-stops, and when the MPD connection drops or comes back.
+mpDris2 does not raise its own desktop notifications: modern desktops
+(GNOME, KDE, sway with `playerctld`, …) surface track changes straight
+from the MPRIS metadata mpDris2 exports.
 
 # Architecture
 
@@ -125,8 +120,6 @@ make deb            # dpkg-buildpackage -b -us -uc (Debian toolchain)
 make clean          # drop build/, dist/, *.egg-info
 make version        # print the Python version (from __init__.py)
 make sync-deb       # bump debian/changelog to match __init__.py
-make i18n-extract   # refresh po/mpdris2.pot from source
-make i18n-compile   # compile po/*.po into the runtime locale tree
 ```
 
 `mpdris2/__init__.py` is the single source of truth for the version;
@@ -152,4 +145,12 @@ step that yields a usable image wins; later steps are skipped.
 | 2 | FS regex scan | `cover_regex` match in the song's directory (default matches `cover.*`, `folder.*`, `album.*`, `front.*`) | `file://` URI of the matched file (RFC-3986 percent-encoded) | A non-standardly-named cover sits next to the audio file (local FS only) |
 | 3 | MPD `albumart` | `cover.{png,jpg,jxl,webp}` in the song's directory (resolved server-side by MPD) | `file:///tmp/cover-*.{jpg,png,…}` | Remote MPD, or step 2 missed (standard name only) |
 | 4 | CUE/cdda fallback | `cover_regex` match next to the loaded `.cue` playlist (FS scan), falling back to MPD `albumart` (which server-side resolves `cover.{png,jpg,jxl,webp}`) when music_dir isn't locally accessible | `file://` URI of the matched file (local FS) or `file:///tmp/cover-*` (remote MPD) | The song is a CUE virtual track (cdda://, http://, …) and the CUE's own directory holds a cover |
-| 5 | XDG cover cache | `$XDG_CACHE_HOME/mpDris2/{artist}-{album}.{jpg,png,…}` | `file://` URI of the cached file | Earlier steps failed and a previous run (or the optional MusicBrainz fallback) populated the cache |
+| 5 | Remote cover URL | MusicBrainz/CAA, iTunes, Deezer — whichever are listed in `[Cover] sources`, in that priority order. For web radio (title only) each source resolves the album within its own catalogue | Remote image **URL** (image not downloaded) | Earlier steps failed, a source is enabled and has cover art for the `(artist, album)` |
+| 6 | Station favicon | Community Radio Browser lookup of the stream URL (`radiobrowser` in `[Cover] stream_sources`) | Station favicon **URL** (image not downloaded) | An `http(s)://` web-radio stream whose station has a favicon |
+| 7 | myMPD WebradioDB | `MYMPD_API_WEBRADIODB_RADIO_GET_BY_URI` against the myMPD at `[Cover] mympd_uri` (`mympd` in `[Cover] stream_sources`) | WebradioDB cover **URL** (image not downloaded) | A web-radio stream that the configured myMPD's WebradioDB knows |
+
+Step 5's MusicBrainz/CAA lookup needs the optional `[cover]` extra
+(`pip install '.[cover]'`, or the `python3-musicbrainzngs` +
+`python3-rapidfuzz` packages); the iTunes, Deezer and myMPD fallbacks are
+stdlib-only. Steps 5–7 return a remote URL used as `mpris:artUrl` — the
+MPRIS client fetches it, nothing is downloaded or cached to disk.
