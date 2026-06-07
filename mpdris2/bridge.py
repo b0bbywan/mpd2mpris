@@ -76,6 +76,8 @@ class BridgeConfig:
     is_socket: bool
     music_dir: Path | None
     cover_regex: re.Pattern[str]
+    cover_itunes: bool
+    cover_deezer: bool
     cdprev: bool
     notify_paused: bool
     no_reconnect: bool
@@ -167,6 +169,8 @@ class MpdMprisBridge:
             CoverFinderConfig(
                 music_dir=self.music_dir,
                 cover_regex=config.cover_regex,
+                use_itunes=config.cover_itunes,
+                use_deezer=config.cover_deezer,
             )
         )
         self.bus = bus
