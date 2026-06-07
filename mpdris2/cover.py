@@ -21,10 +21,15 @@ parsing/transferring for that guarantee.
    playlist instead. Tries the local FS regex first (no temp-file
    copy, picks up names like ``folder.jpg``), then falls back to MPD
    ``albumart``.
-5. XDG cover cache (``$XDG_CACHE_HOME/mpDris2/{artist}-{album}.jpg``).
-
-The optional MusicBrainz / Cover Art Archive fallback (PR 5) will slot
-in as a sixth step.
+5. Remote cover URL — MusicBrainz/CAA (canonical), then the opt-in
+   iTunes and Deezer fallbacks (broader coverage, off by default), each
+   returning an image **URL** that becomes ``mpris:artUrl`` unchanged —
+   the image is never downloaded, the MPRIS client fetches it (lighter,
+   and we link rather than re-host). Memoised per
+   (artist, album). For web radio
+   (only a title, no album tag) the artist+album are first recovered
+   from MusicBrainz, then Deezer as a fallback, so this path can key on
+   them.
 
 Requires MPD ≥ 0.22 (for ``readpicture``); the daemon won't error out
 on older servers but covers for non-standardly-named files won't work.
@@ -35,23 +40,22 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import re
 import tempfile
 import urllib.parse
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, TypeVar
 
+from mpdris2 import deezer, itunes, musicbrainz
 from mpdris2.translate import first
 
 logger = logging.getLogger(__name__)
 
-# User-side cover cache. Follows the XDG cache spec; PR 5
-# (MusicBrainz fallback) writes its downloads here and step 4 picks
-# them up on the next track.
-DEFAULT_COVER_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "mpDris2"
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 DEFAULT_COVER_REGEX = re.compile(
     r"^(album|cover|\.?folder|front).*\.(gif|jpe?g|png|webp|bmp)$",
@@ -127,9 +131,16 @@ class CoverFinderConfig:
 
     music_dir: Path | None = None
     cover_regex: re.Pattern[str] = DEFAULT_COVER_REGEX
-    cover_cache_dir: Path = DEFAULT_COVER_CACHE_DIR
     can_readpicture: bool = False
     can_albumart: bool = False
+    # Opt-in remote cover fallbacks (step 5), off by default. MusicBrainz/CAA
+    # is always tried first; these widen coverage at the cost of extra
+    # third-party queries.
+    use_itunes: bool = False
+    use_deezer: bool = False
+    # Base URL of a myMPD instance for the WebradioDB cover fallback (step
+    # 7); empty/None disables it.
+    mympd_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +157,26 @@ class SongLookup:
     last_loaded_playlist: str = ""
 
 
+# Per-cache entry cap. Covers/keys are cheap to re-resolve (one network
+# call), so a long-running daemon zapping web radios needn't hoard them.
+_CACHE_MAX = 256
+
+
+class _BoundedCache(OrderedDict):
+    """Insertion-ordered dict capped at ``maxsize`` entries, evicting the
+    oldest on overflow. Holds ``None`` values (negative cache), so callers
+    probe membership with ``in``."""
+
+    def __init__(self, maxsize: int = _CACHE_MAX) -> None:
+        super().__init__()
+        self._maxsize = maxsize
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        super().__setitem__(key, value)
+        if len(self) > self._maxsize:
+            self.popitem(last=False)
+
+
 class CoverFinder:
     """Owns the per-track temp file for embedded covers + the MPD
     capability flags (``readpicture`` / ``albumart``)."""
@@ -154,11 +185,26 @@ class CoverFinder:
         config = config or CoverFinderConfig()
         self._music_dir = config.music_dir
         self._cover_regex = config.cover_regex
-        self._cache_dir = config.cover_cache_dir
         self._can_readpicture = config.can_readpicture
         self._can_albumart = config.can_albumart
+        self._use_deezer = config.use_deezer
+        # Remote cover-URL sources, queried concurrently with the
+        # highest-priority hit winning: MusicBrainz/CAA (canonical, always
+        # on) first, then the opt-in, broader-coverage, no-auth fallbacks.
+        # Each exposes ``cover_url(artist, album) -> str | None``.
+        self._cover_sources: list[Any] = [musicbrainz]
+        if config.use_itunes:
+            self._cover_sources.append(itunes)
+        if config.use_deezer:
+            self._cover_sources.append(deezer)
         self._temp_song_uri: str | None = None
         self._temp_cover: IO[bytes] | None = None
+        # title -> (artist, album) | None, memoised so a web-radio title
+        # resolves to a stable key across refreshes (and isn't re-queried).
+        self._title_key_cache: dict[str, tuple[str, str] | None] = _BoundedCache()
+        # (artist, album) -> remote cover URL | None (step 5), memoised so an
+        # album played track-by-track isn't re-looked-up each time.
+        self._url_cache: dict[tuple[str, str], str | None] = _BoundedCache()
 
     def update_capabilities(self, *, can_readpicture: bool, can_albumart: bool) -> None:
         self._can_readpicture = can_readpicture
@@ -226,11 +272,17 @@ class CoverFinder:
             if cover:
                 return cover
 
-        # 5. Downloaded-covers cache (XDG).
-        cover = self._lookup_downloads_cache(req.mpd_meta)
+        # Resolve the (artist, album) key: straight from the tags, or
+        # — for web radio with only a title — recovered from MusicBrainz.
+        artist, album = await self._resolve_key(req.mpd_meta)
+
+        # 5. Remote cover URL (MusicBrainz/CAA, iTunes, Deezer) — the image
+        #    isn't downloaded, the MPRIS client fetches the URL itself.
+        cover = await self._remote_cover(artist, album)
         if cover:
             return cover
 
+        logger.debug("cover: no cover found for %s", req.song_uri)
         return None
 
     # --- step 1 + 3 helpers: MPD protocol ----------------------------
@@ -340,17 +392,99 @@ class CoverFinder:
 
         return await asyncio.to_thread(_scan)
 
-    # --- step 5: downloaded-covers cache ----------------------------
-    def _lookup_downloads_cache(self, mpd_meta: dict) -> str | None:
+    # --- (artist, album) key resolution -----------------------------
+    async def _resolve_key(self, mpd_meta: dict) -> tuple[str, str]:
+        """Return the (artist, album) the cache and cover lookups key on.
+        From the tags when present; otherwise — web radio with only a
+        title — recovered from MusicBrainz, then Deezer (broader catalogue,
+        when enabled) as a fallback, memoised per title. The memo is what
+        makes a repeat play resolve to the same key (so the disk cache hits)
+        instead of re-querying non-deterministically."""
         artist = first(mpd_meta.get("artist"))
         album = first(mpd_meta.get("album"))
-        if not artist or not album:
-            return None
+        if artist and album:
+            return artist, album
+        title = first(mpd_meta.get("title"))
+        if not title:
+            return artist, album
+        key = await self._cached_definitive(
+            self._title_key_cache, title,
+            lambda: self._resolve_title(title),
+        )
+        return key or (artist, album)
 
-        # ``/`` would escape ``_cache_dir`` (e.g. "AC/DC").
-        safe_name = f"{artist}-{album}.jpg".replace("/", "_")
-        path = self._cache_dir / safe_name
-        return path.as_uri() if path.exists() else None
+    async def _resolve_title(self, title: str) -> tuple[tuple[str, str] | None, bool]:
+        """Resolve a web-radio title to (artist, album) from MusicBrainz and
+        (when enabled) Deezer, queried concurrently — the highest-priority
+        hit (MusicBrainz first) wins. Returns ``(key, definitive)``;
+        ``definitive`` is False when a source errored and none resolved, so
+        the caller skips caching and retries."""
+        sources: list[tuple[str, Callable[[str], Awaitable[tuple[str, str] | None]]]] = [
+            ("musicbrainz", musicbrainz.resolve_album),
+        ]
+        if self._use_deezer:
+            sources.append(("deezer", deezer.resolve_album))
+        results = await asyncio.gather(*(fn(title) for _, fn in sources), return_exceptions=True)
+        key: tuple[str, str] | None = None
+        errored = False
+        for (name, _fn), res in zip(sources, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.debug("cover: %s resolve failed for %r: %r", name, title, res)
+                errored = True
+            elif res and key is None:
+                key = res  # first (highest-priority) hit
+        return key, key is not None or not errored
+
+    # --- step 5: remote cover URL -----------------------------------
+    async def _remote_cover(self, artist: str, album: str) -> str | None:
+        """First cover URL from MusicBrainz/iTunes/Deezer for an album (the
+        URL itself — the image isn't downloaded). Memoised per (artist,
+        album); ``None`` when artist/album is missing or no source has it."""
+        if not artist or not album:
+            logger.debug("cover: no remote key (artist=%r album=%r)", artist, album)
+            return None
+        return await self._cached_definitive(
+            self._url_cache, (artist, album),
+            lambda: self._lookup_cover_url(artist, album),
+        )
+
+    async def _lookup_cover_url(self, artist: str, album: str) -> tuple[str | None, bool]:
+        """Query the cover sources concurrently and return ``(url,
+        definitive)`` for the highest-priority hit (sources are ordered
+        MusicBrainz-first). ``definitive`` is False when a source errored
+        and none yielded a URL — the caller skips caching so a transient
+        failure is retried; a clean all-miss is definitive."""
+        results = await asyncio.gather(
+            *(source.cover_url(artist, album) for source in self._cover_sources),
+            return_exceptions=True,
+        )
+        url: str | None = None
+        errored = False
+        for source, res in zip(self._cover_sources, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.debug("cover: %s failed for %r / %r: %r", source.__name__, artist, album, res)
+                errored = True
+            elif res and url is None:
+                logger.debug("cover: %s -> %s", source.__name__, res)
+                url = res  # first (highest-priority) hit
+        return url, url is not None or not errored
+
+    async def _cached_definitive(
+        self,
+        cache: dict[_K, _V | None],
+        key: _K,
+        compute: Callable[[], Awaitable[tuple[_V | None, bool]]],
+    ) -> _V | None:
+        """Serve ``key`` from ``cache``, else run a multi-source ``compute()``
+        → ``(value, definitive)`` and store it only when ``definitive`` (a
+        clean hit or all-source miss). A non-definitive result (some source
+        errored) isn't cached, so it's retried next time."""
+        if key in cache:
+            return cache[key]
+        value, definitive = await compute()
+        if definitive:
+            cache[key] = value
+        return value
 
     # --- internal helpers --------------------------------------------
     def _materialise(self, song_uri: str, data: bytes, mime: str) -> str:
