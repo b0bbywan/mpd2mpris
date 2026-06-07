@@ -12,12 +12,10 @@ mpDris2 \- media player interface (MPRIS2) bridge for MPD
 is an implementation of the MPRIS2 media player interface as a
 client for MPD, allowing MPRIS2 clients to control MPD and observe its
 track changes via a standard D-Bus interface. The daemon runs entirely
-on asyncio (python-mpd2 + dbus-fast); track-change notifications are
-sent via libnotify when a notification daemon is available.
+on asyncio (python-mpd2 + dbus-fast).
 .PP
 It is normally run automatically via D-Bus service activation, or as a
-systemd user unit. On systems following the freedesktop.org Desktop
-Application Autostart Specification it will be run on login.
+systemd user unit.
 .SH CONFIGURATION
 \fBmpDris2\fR is normally configured via the file
 \fIXDG_CONFIG_HOME\fB/mpDris2/mpDris2.conf\fR (typically
@@ -62,9 +60,5 @@ Set the hostname of the MPD server, overriding the configuration file.
 .TP
 \fBMPD_PORT\fR=\fIPORT\fR
 Set the port number of the MPD server, overriding the configuration file.
-.TP
-\fBXDG_MUSIC_DIR\fR=\fIDIRECTORY\fR
-Used to find the default music directory if not specified in the
-configuration file or as a command-line option.
 .SH SEE ALSO
 .BR mpd (1)
