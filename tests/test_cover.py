@@ -16,10 +16,26 @@ from mpdris2.cover import (
     CoverFinder,
     CoverFinderConfig,
     SongLookup,
+    _BoundedCache,
     _detect_mime,
     _has_uri_scheme,
     _is_virtual_cue_track,
 )
+
+# --- _BoundedCache --------------------------------------------------------
+
+def test_bounded_cache_evicts_oldest_over_capacity() -> None:
+    c = _BoundedCache(maxsize=2)
+    c["a"], c["b"] = 1, 2
+    c["c"] = 3  # evicts "a", the oldest
+    assert "a" not in c
+    assert dict(c) == {"b": 2, "c": 3}
+
+
+def test_bounded_cache_keeps_none_values() -> None:
+    c = _BoundedCache(maxsize=2)
+    c["a"] = None
+    assert "a" in c and c["a"] is None
 
 # --- _detect_mime ---------------------------------------------------------
 
@@ -256,48 +272,176 @@ async def test_scan_song_dir_swallows_oserror(
     assert await cf._scan_song_dir(tmp_path) is None
 
 
-# --- _lookup_downloads_cache ---------------------------------------------
+# --- remote cover URL: tagged (_remote_cover) + title (_remote_cover_for_title)
 
-def test_lookup_downloads_cache_hit(tmp_path: Path) -> None:
-    (tmp_path / "Artist-Album.jpg").touch()
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache({"artist": "Artist", "album": "Album"})
-    assert result == (tmp_path / "Artist-Album.jpg").as_uri()
-
-
-def test_lookup_downloads_cache_miss(tmp_path: Path) -> None:
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache({"artist": "Artist", "album": "Album"})
-    assert result is None
+def _async_return(value: object):
+    async def _fn(*_a: object, **_k: object) -> object:
+        return value
+    return _fn
 
 
-def test_lookup_downloads_cache_missing_artist(tmp_path: Path) -> None:
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    assert cf._lookup_downloads_cache({"album": "Album"}) is None
+def _patch_track_sources(monkeypatch, mb=None, it=None, dz=None) -> None:
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track", _async_return(mb))
+    monkeypatch.setattr("mpdris2.cover.itunes.cover_for_track", _async_return(it))
+    monkeypatch.setattr("mpdris2.cover.deezer.cover_for_track", _async_return(dz))
 
 
-def test_lookup_downloads_cache_missing_album(tmp_path: Path) -> None:
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    assert cf._lookup_downloads_cache({"artist": "Artist"}) is None
+@pytest.mark.asyncio
+async def test_cover_for_title_unparseable_skips_query(monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track",
+                        lambda *a: calls.append(a))
+    cf = CoverFinder()
+    assert await cf._remote_cover_for_title("bare station name") is None
+    assert calls == []  # no separator → no source queried
 
 
-def test_lookup_downloads_cache_sanitizes_slash(tmp_path: Path) -> None:
-    # "AC/DC" must not escape the cache dir into ``tmp_path/AC/DC-...``.
-    (tmp_path / "AC_DC-Back in Black.jpg").touch()
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache(
-        {"artist": "AC/DC", "album": "Back in Black"},
-    )
-    assert result == (tmp_path / "AC_DC-Back in Black.jpg").as_uri()
+@pytest.mark.asyncio
+async def test_cover_for_title_musicbrainz_wins(monkeypatch) -> None:
+    _patch_track_sources(monkeypatch, mb=_CAA, dz=_ITU)
+    cf = CoverFinder(CoverFinderConfig(use_deezer=True))
+    assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA
 
 
-def test_lookup_downloads_cache_list_artist_uses_first(tmp_path: Path) -> None:
-    (tmp_path / "A-B.jpg").touch()
-    cf = CoverFinder(CoverFinderConfig(cover_cache_dir=tmp_path))
-    result = cf._lookup_downloads_cache(
-        {"artist": ["A", "X", "Y"], "album": "B"}
-    )
-    assert result == (tmp_path / "A-B.jpg").as_uri()
+@pytest.mark.asyncio
+async def test_cover_for_title_falls_back_to_deezer(monkeypatch) -> None:
+    # MusicBrainz resolves the wrong album (no CAA cover); Deezer finds the
+    # right one within its own catalogue and wins.
+    _patch_track_sources(monkeypatch, mb=None, dz=_ITU)
+    cf = CoverFinder(CoverFinderConfig(use_deezer=True))
+    assert await cf._remote_cover_for_title("Elliott Smith - Waltz #2") == _ITU
+
+
+@pytest.mark.asyncio
+async def test_cover_for_title_skips_disabled_fallbacks(monkeypatch) -> None:
+    # Deezer off (default): an MB miss isn't widened to it.
+    _patch_track_sources(monkeypatch, mb=None, dz=_ITU)
+    cf = CoverFinder()
+    assert await cf._remote_cover_for_title("Elliott Smith - Waltz #2") is None
+
+
+@pytest.mark.asyncio
+async def test_cover_for_title_memoises(monkeypatch) -> None:
+    calls: list = []
+
+    async def _mb(artist: str, track: str) -> str:
+        calls.append((artist, track))
+        return _CAA
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track", _mb)
+    cf = CoverFinder()
+    assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA
+    assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA
+    assert calls == [("Mato", "1980 Dub")]  # second served from cache
+
+
+@pytest.mark.asyncio
+async def test_cover_for_title_not_cached_on_transient_error(monkeypatch) -> None:
+    calls: list = []
+
+    async def _mb(artist: str, track: str) -> str:
+        calls.append((artist, track))
+        if len(calls) == 1:
+            raise OSError("transient")
+        return _CAA
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track", _mb)
+    cf = CoverFinder()
+    assert await cf._remote_cover_for_title("Mato - 1980 Dub") is None  # errored → not cached
+    assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA  # retried
+    assert calls == [("Mato", "1980 Dub"), ("Mato", "1980 Dub")]
+
+
+def _patch_sources(monkeypatch, mb=None, it=None, dz=None) -> None:
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _async_return(mb))
+    monkeypatch.setattr("mpdris2.cover.itunes.cover_url", _async_return(it))
+    monkeypatch.setattr("mpdris2.cover.deezer.cover_url", _async_return(dz))
+
+
+_CAA = "https://coverartarchive.org/release/rel-1/front-500.jpg"
+_ITU = "https://is1.mzstatic.com/image/.../600x600bb.jpg"
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_returns_first_url(monkeypatch) -> None:
+    _patch_sources(monkeypatch, mb=_CAA)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") == _CAA
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_falls_back_to_next_source(monkeypatch) -> None:
+    # MusicBrainz/CAA has nothing; iTunes (opt-in) provides the URL.
+    _patch_sources(monkeypatch, mb=None, it=_ITU)
+    cf = CoverFinder(CoverFinderConfig(use_itunes=True))
+    assert await cf._remote_cover("A", "B") == _ITU
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_skips_disabled_fallbacks(monkeypatch) -> None:
+    # iTunes/Deezer off (default): MB miss isn't widened to them.
+    _patch_sources(monkeypatch, mb=None, it=_ITU, dz=_ITU)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_none_when_no_source_has_it(monkeypatch) -> None:
+    _patch_sources(monkeypatch)  # all None
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_memoises(monkeypatch) -> None:
+    calls: list = []
+
+    async def _mb(artist: str, album: str) -> str:
+        calls.append((artist, album))
+        return _CAA
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    monkeypatch.setattr("mpdris2.cover.itunes.cover_url", _async_return(None))
+    monkeypatch.setattr("mpdris2.cover.deezer.cover_url", _async_return(None))
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") == _CAA
+    assert await cf._remote_cover("A", "B") == _CAA
+    assert calls == [("A", "B")]  # second served from memo
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_not_cached_on_transient_error(monkeypatch) -> None:
+    # A source error must not poison the cache: the first lookup raises, the
+    # second succeeds and yields the URL (i.e. it was retried, not cached None).
+    calls: list = []
+
+    async def _mb(artist: str, album: str) -> str:
+        calls.append((artist, album))
+        if len(calls) == 1:
+            raise OSError("transient")
+        return _CAA
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None  # errored → not cached
+    assert await cf._remote_cover("A", "B") == _CAA  # retried, now resolves
+    assert calls == [("A", "B"), ("A", "B")]
+
+
+@pytest.mark.asyncio
+async def test_remote_cover_caches_confirmed_miss(monkeypatch) -> None:
+    # A clean all-source miss IS cached (no error) — not re-queried.
+    calls: list = []
+
+    async def _mb(artist: str, album: str) -> None:
+        calls.append((artist, album))
+        return None
+
+    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    cf = CoverFinder()
+    assert await cf._remote_cover("A", "B") is None
+    assert await cf._remote_cover("A", "B") is None
+    assert calls == [("A", "B")]  # confirmed miss memoised
 
 
 # --- _materialise + temp reuse via find() --------------------------------
@@ -406,38 +550,31 @@ async def test_find_falls_through_to_step3_filesystem(
 
 
 @pytest.mark.asyncio
-async def test_find_falls_through_to_step4_downloads_cache(
-    tmp_path: Path,
+async def test_find_falls_through_to_step5_remote_url(
+    tmp_path: Path, monkeypatch,
 ) -> None:
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    (cache_dir / "Artist-Album.jpg").touch()
+    _patch_sources(monkeypatch, mb="https://caa/front-500.jpg")
     music_dir = tmp_path / "music"
     music_dir.mkdir()
 
-    cf = CoverFinder(CoverFinderConfig(
-        music_dir=music_dir, cover_cache_dir=cache_dir,
-    ))
+    cf = CoverFinder(CoverFinderConfig(music_dir=music_dir))
     uri = await cf.find(SongLookup(
         client=_client_with(),
         song_uri=(music_dir / "Song.flac").as_uri(),
         song_file="Song.flac",
         mpd_meta={"artist": "Artist", "album": "Album"},
     ))
-    assert uri == (cache_dir / "Artist-Album.jpg").as_uri()
+    assert uri == "https://caa/front-500.jpg"  # remote URL returned as-is, not downloaded
 
 
 @pytest.mark.asyncio
 async def test_find_returns_none_when_nothing_matches(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
+    _patch_sources(monkeypatch)  # no remote cover from any source
     music_dir = tmp_path / "music"
     music_dir.mkdir()
-    cf = CoverFinder(CoverFinderConfig(
-        music_dir=music_dir, cover_cache_dir=cache_dir,
-    ))
+    cf = CoverFinder(CoverFinderConfig(music_dir=music_dir))
     uri = await cf.find(SongLookup(
         client=_client_with(),
         song_uri=(music_dir / "Nope.flac").as_uri(),
