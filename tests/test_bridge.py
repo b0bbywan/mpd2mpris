@@ -8,9 +8,12 @@ loop). Only the attributes the methods under test read are set on it.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import mpd
 import pytest
 from dbus_fast import Variant
 
@@ -412,4 +415,353 @@ def test_apply_drops_art_on_real_track_change() -> None:
     )
     emitted = bridge.player.update_metadata.call_args.args[0]
     assert "mpris:artUrl" not in emitted
+
+
+# --- MPRIS callbacks + task plumbing --------------------------------------
+# These run the real ``_fire``/``_schedule``/``_mpd_safe`` chain on the live
+# test event loop; the MPD client is a MagicMock whose commands are AsyncMocks.
+
+
+def _mpd_client(**status: str):
+    """MagicMock MPD client whose awaited commands are AsyncMocks; ``status``
+    becomes the dict ``c.status()`` resolves to."""
+    c = MagicMock()
+    for name in ("play", "pause", "stop", "next", "previous", "random",
+                 "setvol", "seekcur", "repeat", "single", "seekid"):
+        setattr(c, name, AsyncMock())
+    c.status = AsyncMock(return_value=dict(status))
+    return c
+
+
+def _callback_bridge(client):
+    """Partially-initialised bridge with a real loop + task set, for the sync
+    MPRIS callbacks. ``client`` may be ``None`` to exercise the no-connection
+    no-op paths."""
+    bridge = MpdMprisBridge.__new__(MpdMprisBridge)
+    bridge._loop = asyncio.get_running_loop()
+    bridge.bg_tasks = set()
+    bridge.client = client
+    bridge.caps = {}
+    bridge._cdprev = False
+    bridge.last_song = {}
+    return bridge
+
+
+async def _drain(bridge) -> None:
+    """Await every MPD task the callbacks scheduled."""
+    await asyncio.gather(*list(bridge.bg_tasks), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call, method, args", [
+    (lambda b: b.on_play(), "play", ()),
+    (lambda b: b.on_pause(), "pause", (1,)),
+    (lambda b: b.on_stop(), "stop", ()),
+    (lambda b: b.on_next(), "next", ()),
+    (lambda b: b.on_shuffle_set(True), "random", (1,)),
+    (lambda b: b.on_shuffle_set(False), "random", (0,)),
+    (lambda b: b.on_volume_set(0.5), "setvol", (50,)),
+])
+async def test_simple_callback_fires_command(call, method, args) -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    call(bridge)
+    await _drain(bridge)
+    getattr(client, method).assert_awaited_once_with(*args)
+
+
+@pytest.mark.asyncio
+async def test_on_volume_set_rounds_to_nearest_percent() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.on_volume_set(0.337)
+    await _drain(bridge)
+    client.setvol.assert_awaited_once_with(34)
+
+
+@pytest.mark.asyncio
+async def test_on_seek_positive_is_relative_with_plus() -> None:
+    # A forward seek is sent as a signed string so MPD treats it as relative.
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.on_seek(2_000_000)
+    await _drain(bridge)
+    client.seekcur.assert_awaited_once_with("+2.0")
+
+
+@pytest.mark.asyncio
+async def test_on_seek_negative_keeps_sign() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.on_seek(-1_500_000)
+    await _drain(bridge)
+    client.seekcur.assert_awaited_once_with("-1.5")
+
+
+@pytest.mark.asyncio
+async def test_on_previous_skips_to_previous_track() -> None:
+    # cdprev disabled: a plain previous, no mid-track seek-to-start.
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.on_previous()
+    await _drain(bridge)
+    client.previous.assert_awaited_once_with()
+    client.seekid.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_play_pause_pauses_when_playing() -> None:
+    client = _mpd_client(state="play")
+    bridge = _callback_bridge(client)
+    bridge.on_play_pause()
+    await _drain(bridge)
+    client.pause.assert_awaited_once_with(1)
+    client.play.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_play_pause_plays_when_not_playing() -> None:
+    client = _mpd_client(state="stop")
+    bridge = _callback_bridge(client)
+    bridge.on_play_pause()
+    await _drain(bridge)
+    client.play.assert_awaited_once_with()
+    client.pause.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_play_pause_no_client_is_noop() -> None:
+    bridge = _callback_bridge(None)
+    bridge.on_play_pause()
+    assert bridge.bg_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_on_get_position_returns_microseconds() -> None:
+    client = _mpd_client(elapsed="12.5")
+    bridge = _callback_bridge(client)
+    assert await bridge.on_get_position() == 12_500_000
+
+
+@pytest.mark.asyncio
+async def test_on_get_position_no_client_returns_none() -> None:
+    bridge = _callback_bridge(None)
+    assert await bridge.on_get_position() is None
+
+
+@pytest.mark.asyncio
+async def test_on_get_position_empty_status_returns_none() -> None:
+    # No status (e.g. command error swallowed) → None so the interface keeps
+    # its last cached Position.
+    client = _mpd_client()  # status() resolves to {}
+    bridge = _callback_bridge(client)
+    assert await bridge.on_get_position() is None
+
+
+@pytest.mark.asyncio
+async def test_on_set_position_seeks_when_trackid_matches() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.last_song = {"id": "7"}
+    bridge.on_set_position("/org/mpris/MediaPlayer2/Track/7", 3_000_000)
+    await _drain(bridge)
+    client.seekcur.assert_awaited_once_with("3.0")
+
+
+@pytest.mark.asyncio
+async def test_on_set_position_noop_on_trackid_mismatch() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.last_song = {"id": "7"}
+    bridge.on_set_position("/org/mpris/MediaPlayer2/Track/9", 3_000_000)
+    await _drain(bridge)
+    client.seekcur.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_set_position_seeks_when_no_current_id() -> None:
+    # With no known current id the spec's match check can't fail, so the seek
+    # proceeds regardless of the supplied trackid.
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.last_song = {}
+    bridge.on_set_position("/org/mpris/MediaPlayer2/Track/3", 1_000_000)
+    await _drain(bridge)
+    client.seekcur.assert_awaited_once_with("1.0")
+
+
+@pytest.mark.asyncio
+async def test_loop_playlist_sets_repeat_and_clears_single() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.caps = {"single": True}
+    bridge.on_loop_status_set("Playlist")
+    await _drain(bridge)
+    client.repeat.assert_awaited_once_with(1)
+    client.single.assert_awaited_once_with(0)
+
+
+@pytest.mark.asyncio
+async def test_loop_track_sets_repeat_and_single() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.caps = {"single": True}
+    bridge.on_loop_status_set("Track")
+    await _drain(bridge)
+    client.repeat.assert_awaited_once_with(1)
+    client.single.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_loop_none_clears_repeat_and_single() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.caps = {"single": True}
+    bridge.on_loop_status_set("None")
+    await _drain(bridge)
+    client.repeat.assert_awaited_once_with(0)
+    client.single.assert_awaited_once_with(0)
+
+
+@pytest.mark.asyncio
+async def test_loop_without_single_capability_skips_single() -> None:
+    client = _mpd_client()
+    bridge = _callback_bridge(client)
+    bridge.caps = {}  # MPD too old for `single`
+    bridge.on_loop_status_set("Track")
+    await _drain(bridge)
+    client.repeat.assert_awaited_once_with(1)
+    client.single.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_loop_no_client_is_noop() -> None:
+    bridge = _callback_bridge(None)
+    bridge.on_loop_status_set("Track")
+    assert bridge.bg_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_fire_without_client_schedules_nothing() -> None:
+    bridge = _callback_bridge(None)
+    bridge.on_play()
+    assert bridge.bg_tasks == set()
+
+
+# --- _mpd_safe / _on_bg_done ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mpd_safe_returns_value() -> None:
+    bridge = _callback_bridge(_mpd_client())
+
+    async def ok() -> str:
+        return "value"
+
+    assert await bridge._mpd_safe(ok()) == "value"
+
+
+@pytest.mark.asyncio
+async def test_mpd_safe_swallows_command_error() -> None:
+    bridge = _callback_bridge(_mpd_client())
+
+    async def boom() -> None:
+        raise mpd.CommandError("no current song")
+
+    assert await bridge._mpd_safe(boom()) is None
+
+
+@pytest.mark.asyncio
+async def test_mpd_safe_swallows_connection_error() -> None:
+    bridge = _callback_bridge(_mpd_client())
+
+    async def boom() -> None:
+        raise mpd.ConnectionError("lost")
+
+    assert await bridge._mpd_safe(boom()) is None
+
+
+@pytest.mark.asyncio
+async def test_mpd_safe_swallows_oserror() -> None:
+    bridge = _callback_bridge(_mpd_client())
+
+    async def boom() -> None:
+        raise OSError("socket gone")
+
+    assert await bridge._mpd_safe(boom()) is None
+
+
+@pytest.mark.asyncio
+async def test_on_bg_done_logs_crash(caplog) -> None:
+    bridge = _callback_bridge(_mpd_client())
+
+    async def boom() -> None:
+        raise RuntimeError("kaboom")
+
+    with caplog.at_level(logging.ERROR):
+        bridge._schedule(boom())
+        await _drain(bridge)
+        await asyncio.sleep(0)  # let the done-callback run
+    assert any("background task crashed" in r.message for r in caplog.records)
+    assert bridge.bg_tasks == set()  # discarded after completion
+
+
+@pytest.mark.asyncio
+async def test_on_bg_done_ignores_cancelled(caplog) -> None:
+    bridge = _callback_bridge(_mpd_client())
+
+    async def forever() -> None:
+        await asyncio.sleep(3600)
+
+    bridge._schedule(forever())
+    task = next(iter(bridge.bg_tasks))
+    task.cancel()
+    with caplog.at_level(logging.ERROR):
+        await asyncio.sleep(0)
+    assert not any("crashed" in r.message for r in caplog.records)
+
+
+# --- _reset_cover_state / refresh -----------------------------------------
+
+
+def test_reset_cover_state_clears_change_detection() -> None:
+    bridge = MpdMprisBridge.__new__(MpdMprisBridge)
+    bridge._last_base = {"xesam:title": Variant("s", "x")}
+    bridge._art = "file:///cache/c.jpg"
+    bridge._cover_task = None
+    bridge._reset_cover_state()
+    assert bridge._last_base == {}
     assert bridge._art is None
+
+
+@pytest.mark.asyncio
+async def test_reset_cover_state_cancels_inflight_lookup() -> None:
+    bridge = MpdMprisBridge.__new__(MpdMprisBridge)
+    bridge._last_base = {}
+    bridge._art = None
+
+    async def forever() -> None:
+        await asyncio.sleep(3600)
+
+    bridge._cover_task = asyncio.get_running_loop().create_task(forever())
+    task = bridge._cover_task
+    bridge._reset_cover_state()
+    assert bridge._cover_task is None
+    await asyncio.sleep(0)
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_refresh_no_client_returns_early() -> None:
+    bridge = _callback_bridge(None)
+    await bridge.refresh()  # no client → returns without raising
+
+
+@pytest.mark.asyncio
+async def test_refresh_swallows_connection_drop(caplog) -> None:
+    client = MagicMock()
+    client.status = AsyncMock(side_effect=mpd.ConnectionError("lost"))
+    bridge = _callback_bridge(client)
+    with caplog.at_level(logging.WARNING):
+        await bridge.refresh()
+    assert any("MPD lost during refresh" in r.message for r in caplog.records)
