@@ -16,9 +16,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -72,10 +71,7 @@ class BridgeConfig:
     password: str | None
     is_socket: bool
     music_dir: Path | None
-    cover_regex: re.Pattern[str]
-    cover_sources: tuple[str, ...]
-    cover_stream_sources: tuple[str, ...]
-    cover_mympd_uri: str | None
+    cover: CoverFinderConfig
     cdprev: bool
     no_reconnect: bool
 
@@ -158,15 +154,7 @@ class MpdMprisBridge:
         self._art: str | None = None
         self._cover_task: asyncio.Task | None = None
 
-        self.cover_finder = CoverFinder(
-            CoverFinderConfig(
-                music_dir=self.music_dir,
-                cover_regex=config.cover_regex,
-                cover_sources=config.cover_sources,
-                stream_sources=config.cover_stream_sources,
-                mympd_url=config.cover_mympd_uri,
-            )
-        )
+        self.cover_finder = CoverFinder(replace(config.cover, music_dir=self.music_dir))
         self.bus = bus
         self._cdprev = config.cdprev
         self._no_reconnect = config.no_reconnect
@@ -336,6 +324,14 @@ class MpdMprisBridge:
             self._cover_task.cancel()
         self._cover_task = None
 
+    def _reset_cover_state(self) -> None:
+        """Clear the metadata/cover change-detection state and cancel any
+        in-flight lookup — for when nothing is playing (no current song or a
+        reconnect), so the next track is treated as a fresh emit."""
+        self._last_base = {}
+        self._art = None
+        self._cancel_cover()
+
     def _schedule_cover(self, song: dict, status: dict, base: dict[str, Variant]) -> None:
         """Resolve the cover for ``base`` off the critical path, replacing
         any in-flight lookup for the previous track."""
@@ -454,9 +450,7 @@ class MpdMprisBridge:
         if not song:
             self.player.update_metadata({})
             self.player.update_capabilities(can_seek=False)
-            self._last_base = {}
-            self._art = None
-            self._cancel_cover()
+            self._reset_cover_state()
             return
 
         # Cover-free Metadata first (cover resolved off the critical path);
@@ -557,9 +551,7 @@ class MpdMprisBridge:
             # while we reconnect.
             self.player.update_playback_status("Stopped")
             self.player.update_metadata({})
-            self._last_base = {}
-            self._art = None
-            self._cancel_cover()
+            self._reset_cover_state()
 
     async def close(self) -> None:
         """Drain in-flight tasks and release the bus name. The bus

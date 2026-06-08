@@ -23,7 +23,7 @@ from dbus_fast import BusType
 from dbus_fast.aio import MessageBus
 
 from mpdris2.bridge import BridgeConfig, MpdMprisBridge
-from mpdris2.cover import DEFAULT_COVER_REGEX
+from mpdris2.cover import DEFAULT_COVER_REGEX, CoverFinderConfig
 from mpdris2.mpd_client import is_unix_socket
 
 logger = logging.getLogger("mpdris2")
@@ -169,10 +169,12 @@ def build_bridge_config(
         password=password,
         is_socket=is_socket,
         music_dir=_resolve_music_dir(cfg, args),
-        cover_regex=_resolve_cover_regex(cfg),
-        cover_sources=_resolve_cover_list(cfg, "sources"),
-        cover_stream_sources=_resolve_cover_list(cfg, "stream_sources"),
-        cover_mympd_uri=_resolve_mympd_uri(cfg),
+        cover=CoverFinderConfig(
+            cover_regex=_resolve_cover_regex(cfg),
+            cover_sources=_resolve_cover_list(cfg, "sources"),
+            stream_sources=_resolve_cover_list(cfg, "stream_sources"),
+            mympd_url=_resolve_mympd_uri(cfg),
+        ),
         cdprev=_resolve_cdprev(cfg),
         no_reconnect=args.no_reconnect,
     )
