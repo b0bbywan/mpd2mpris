@@ -68,7 +68,7 @@ jobs:
           mv ../mpdris2_*.deb dist/
           ls -lh dist/
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: mpdris2-deb
           path: dist/*.deb
@@ -85,7 +85,7 @@ jobs:
         run: pip install build
       - name: Build sdist
         run: python -m build --sdist
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: mpdris2-sdist
           path: dist/*.tar.gz
@@ -119,7 +119,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: peter-evans/repository-dispatch@v3
+      - uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.APT_REPO_TOKEN }}
           repository: b0bbywan/odio-apt-repo
