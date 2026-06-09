@@ -184,9 +184,9 @@ step that yields a usable image wins; later steps are skipped.
 | 7 | myMPD WebradioDB | `MYMPD_API_WEBRADIODB_RADIO_GET_BY_URI` against the myMPD at `[Cover] mympd_uri` (`mympd` in `[Cover] stream_sources`) | WebradioDB cover **URL** (image not downloaded) | A web-radio stream that the configured myMPD's WebradioDB knows |
 
 Step 5's MusicBrainz/CAA lookup needs the optional `[cover]` extra
-(`pip install '.[cover]'`, or the `python3-musicbrainzngs` +
-`python3-rapidfuzz` packages); the iTunes, Deezer and myMPD fallbacks are
-stdlib-only. Steps 5–7 return a remote URL used as `mpris:artUrl` — the
+(`pip install '.[cover]'`, or the `python3-musicbrainzngs` package);
+artist/title validation is stdlib (`difflib`). The iTunes, Deezer and
+myMPD fallbacks are stdlib-only. Steps 5–7 return a remote URL used as `mpris:artUrl` — the
 MPRIS client fetches it, nothing is downloaded or cached to disk.
 
 # Used in
