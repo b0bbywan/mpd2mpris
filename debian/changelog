@@ -1,4 +1,4 @@
-mpd2mpris (0.12.0~beta.1) unstable; urgency=medium
+mpd2mpris (0.12.0) unstable; urgency=medium
 
   * Rename project mpDris2 -> mpd2mpris (in agreement with the original
     maintainer) to avoid confusion with eonpatapon/mpDris2.
@@ -6,8 +6,9 @@ mpd2mpris (0.12.0~beta.1) unstable; urgency=medium
     systemd unit and config dir follow (Conflicts/Replaces/Provides:
     mpdris2 for a clean upgrade). The MPRIS bus name
     org.mpris.MediaPlayer2.mpd is unchanged.
+  * Drop Suggests: python3-systemd (unused since the asyncio rewrite).
 
- -- Mathieu Réquillart <mathieu.requillart@gmail.com>  Thu, 18 Jun 2026 12:00:00 +0000
+ -- Mathieu Réquillart <mathieu.requillart@gmail.com>  Thu, 18 Jun 2026 13:00:00 +0000
 
 mpdris2 (0.9.3) unstable; urgency=medium
 
