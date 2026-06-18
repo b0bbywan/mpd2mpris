@@ -37,8 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, TypeVar
 
-from mpdris2 import deezer, itunes, musicbrainz, mympd, radiobrowser
-from mpdris2.translate import first, split_title
+from mpd2mpris import deezer, itunes, musicbrainz, mympd, radiobrowser
+from mpd2mpris.translate import first, split_title
 
 logger = logging.getLogger(__name__)
 

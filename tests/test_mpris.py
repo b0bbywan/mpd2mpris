@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from dbus_fast.errors import DBusError
 
-from mpdris2.mpris import MediaPlayer2, MediaPlayer2Player
+from mpd2mpris.mpris import MediaPlayer2, MediaPlayer2Player
 
 # dbus-fast `@dbus_property` rewrites the decorated function into a
 # regular attribute (the descriptor returns the stored value on read),

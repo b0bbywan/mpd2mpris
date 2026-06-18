@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: mpDris2
-Source: https://github.com/b0bbywan/mpDris2
+Upstream-Name: mpd2mpris
+Source: https://github.com/b0bbywan/mpd2mpris
 
 Files: *
 Copyright:
@@ -18,7 +18,7 @@ Copyright:
 License: GPL-3+
 Comment:
  Original Debian packaging by Simon McVittie for the Debian project.
- Adapted for the b0bbywan/mpDris2 fork.
+ Adapted for the b0bbywan/mpd2mpris fork (formerly b0bbywan/mpDris2).
 
 License: GPL-3+
   This program is free software: you can redistribute it and/or modify

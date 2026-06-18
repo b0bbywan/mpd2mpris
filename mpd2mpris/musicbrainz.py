@@ -14,8 +14,8 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
-from mpdris2 import APP, URL, __version__
-from mpdris2.translate import first, normalize
+from mpd2mpris import APP, URL, __version__
+from mpd2mpris.translate import first, normalize
 
 try:
     import musicbrainzngs

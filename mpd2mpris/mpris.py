@@ -12,7 +12,7 @@ time handle Play/Pause/Stop/PlayPause/Next/Previous/Seek/SetPosition/
 volume/loop/shuffle, and ``update_*`` push state changes back to
 subscribed MPRIS clients via ``emit_properties_changed``.
 
-This module has no MPD knowledge — see ``mpdris2.bridge`` for the glue.
+This module has no MPD knowledge — see ``mpd2mpris.bridge`` for the glue.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class MediaPlayer2(ServiceInterface):
     def Identity(self) -> "s":  # noqa: N802
         return IDENTITY
 
-    # No DesktopEntry property: we no longer ship a ``mpdris2.desktop``
+    # No DesktopEntry property: we no longer ship a ``mpd2mpris.desktop``
     # (D-Bus activation handles launch), so advertising one would dangle.
 
     @dbus_property(access=PropertyAccess.READ)

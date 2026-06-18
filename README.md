@@ -1,15 +1,20 @@
-# mpDris2
+# mpd2mpris
 
-[![Build](https://github.com/b0bbywan/mpDris2/actions/workflows/build.yml/badge.svg)](https://github.com/b0bbywan/mpDris2/actions/workflows/build.yml)
-[![Release](https://img.shields.io/github/v/release/b0bbywan/mpDris2)](https://github.com/b0bbywan/mpDris2/releases)
+[![Build](https://github.com/b0bbywan/mpd2mpris/actions/workflows/build.yml/badge.svg)](https://github.com/b0bbywan/mpd2mpris/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/b0bbywan/mpd2mpris)](https://github.com/b0bbywan/mpd2mpris/releases)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![MPD](https://img.shields.io/badge/MPD-F18D00)](https://www.musicpd.org/)
 [![APT](https://img.shields.io/badge/apt-odio.love-A80030)](https://apt.odio.love)
 
-mpDris2 provide MPRIS 2 support to mpd (Music Player Daemon).
+mpd2mpris provide MPRIS 2 support to mpd (Music Player Daemon).
 
-mpDris2 runs in the user session and monitors a local or distant mpd server.
+> Formerly named **mpDris2**. Renamed to **mpd2mpris** (in agreement with
+> the original maintainer) to avoid confusion with the original
+> [mpDris2](https://github.com/eonpatapon/mpDris2), which this project no
+> longer shares code with after the asyncio rewrite.
+
+mpd2mpris runs in the user session and monitors a local or distant mpd server.
 
 ## Contents
 
@@ -47,65 +52,65 @@ curl -fsSL https://apt.odio.love/key.gpg | sudo gpg --dearmor -o /usr/share/keyr
 echo "deb [signed-by=/usr/share/keyrings/odio.gpg] https://apt.odio.love stable main" \
     | sudo tee /etc/apt/sources.list.d/odio.list
 sudo apt update
-sudo apt install mpdris2
+sudo apt install mpd2mpris
 ```
 
 The shipped systemd user unit is `Type=dbus` and a matching D-Bus
-service file is installed, so mpDris2 auto-starts on the first MPRIS
+service file is installed, so mpd2mpris auto-starts on the first MPRIS
 call (`playerctl`, a media key, a desktop applet, …). Enable it
 explicitly only if you want it running before any client asks:
 
 ```sh
-systemctl --user enable --now mpDris2.service
+systemctl --user enable --now mpd2mpris.service
 ```
 
 ## From PyPI
 
 ```sh
-pipx install mpdris2     # or: pip install --user mpdris2
+pipx install mpd2mpris     # or: pip install --user mpd2mpris
 ```
 
-This installs the `mpDris2` console script only — no systemd or D-Bus
+This installs the `mpd2mpris` console script only — no systemd or D-Bus
 service files, unlike the `.deb`. To auto-start it, drop a user unit at
-`~/.config/systemd/user/mpDris2.service` (copy `data/user/mpDris2.service`)
-and `systemctl --user enable --now mpDris2.service`. The optional cover
-deps are `pipx install 'mpdris2[cover]'`.
+`~/.config/systemd/user/mpd2mpris.service` (copy `data/user/mpd2mpris.service`)
+and `systemctl --user enable --now mpd2mpris.service`. The optional cover
+deps are `pipx install 'mpd2mpris[cover]'`.
 
 ## From git
 
 ```sh
-git clone https://github.com/b0bbywan/mpDris2.git
-cd mpDris2
+git clone https://github.com/b0bbywan/mpd2mpris.git
+cd mpd2mpris
 pipx install .          # or: pip install --user .
 ```
 
-This installs the `mpDris2` console script into your `$PATH`. Start it
+This installs the `mpd2mpris` console script into your `$PATH`. Start it
 via a `systemctl --user` unit.
 
 Tagged releases on GitHub also publish an sdist tarball
-(`mpdris2-X.Y.Z.tar.gz`) next to the `.deb`, installable with
-`pipx install ./mpdris2-X.Y.Z.tar.gz`.
+(`mpd2mpris-X.Y.Z.tar.gz`) next to the `.deb`, installable with
+`pipx install ./mpd2mpris-X.Y.Z.tar.gz`.
 
 Runtime dependencies: `python-mpd2` and `dbus-fast`. Python 3.11+.
 
 # Configuration
 
-By default mpDris2 connects to `localhost:6600`. Environment variables
+By default mpd2mpris connects to `localhost:6600`. Environment variables
 `$MPD_HOST` and `$MPD_PORT` are honoured. To change anything else, copy
-the example file shipped at `/usr/share/doc/mpdris2/mpDris2.conf` to
-`~/.config/mpDris2/mpDris2.conf` and edit.
+the example file shipped at `/usr/share/doc/mpd2mpris/mpd2mpris.conf` to
+`~/.config/mpd2mpris/mpd2mpris.conf` and edit.
 
 Cover-art resolution needs `music_dir` to be set (or auto-detected over
 a local Unix socket connection to MPD). See [Cover art](#cover-art)
 below for the full pipeline.
 
-Restart mpDris2 (`pkill -HUP mpDris2`, or just restart your session) to
+Restart mpd2mpris (`pkill -HUP mpd2mpris`, or just restart your session) to
 pick up config changes.
 
 > **Note:** the `[Bling] mmkeys` option from the historical mpDris2 is
 > no longer supported. Modern desktops (GNOME, KDE, sway with
 > `mpris-ctrl`, …) read MPRIS directly for multimedia-key handling, so
-> mpDris2 doesn't need to grab the keys itself anymore.
+> mpd2mpris doesn't need to grab the keys itself anymore.
 
 ## Sample configuration
 
@@ -142,13 +147,13 @@ music_dir = /media/music/
 cdprev = False
 ```
 
-mpDris2 does not raise its own desktop notifications: modern desktops
+mpd2mpris does not raise its own desktop notifications: modern desktops
 (GNOME, KDE, sway with `playerctld`, …) surface track changes straight
-from the MPRIS metadata mpDris2 exports.
+from the MPRIS metadata mpd2mpris exports.
 
 # Architecture
 
-mpDris2 is an asyncio + dbus-fast rewrite of the original PyGObject /
+mpd2mpris is an asyncio + dbus-fast rewrite of the original PyGObject /
 dbus-python implementation: a single asyncio event loop replaces the
 GLib MainLoop + thread pool, `dbus-fast` replaces `dbus-python`, and
 `mpd.asyncio` from `python-mpd2` replaces the blocking client.
@@ -168,7 +173,7 @@ make version        # print the Python version (from __init__.py)
 make sync-deb       # bump debian/changelog to match __init__.py
 ```
 
-`mpdris2/__init__.py` is the single source of truth for the version;
+`mpd2mpris/__init__.py` is the single source of truth for the version;
 `make sync-deb` and `make check-tag TAG=…` keep `debian/changelog`
 and the git tag aligned with it.
 
@@ -182,7 +187,7 @@ time, not at build time.
 
 # Cover art
 
-mpDris2 resolves `mpris:artUrl` through a fixed pipeline. The first
+mpd2mpris resolves `mpris:artUrl` through a fixed pipeline. The first
 step that yields a usable image wins; later steps are skipped.
 
 | # | Step | Source | Exposed `mpris:artUrl` | Wins when… |
@@ -208,18 +213,18 @@ MPRIS client fetches it, nothing is downloaded or cached to disk.
   self-hosted multi-protocol audio streamer that turns a Raspberry Pi or
   Debian box into a hi-fi network receiver. It bundles Bluetooth A2DP,
   AirPlay, Snapcast multi-room, UPnP/DLNA, Spotify Connect, automatic CD
-  playback and web radio on top of MPD. Odio runs mpDris2 to expose its
+  playback and web radio on top of MPD. Odio runs mpd2mpris to expose its
   MPD over MPRIS2, including the cover pipeline that resolves artwork for
   CD and web-radio playback.
 
 # Contributing
 
 Issues and pull requests are welcome on
-[GitHub](https://github.com/b0bbywan/mpDris2/issues).
+[GitHub](https://github.com/b0bbywan/mpd2mpris/issues).
 
 ```sh
-git clone https://github.com/b0bbywan/mpDris2.git
-cd mpDris2
+git clone https://github.com/b0bbywan/mpd2mpris.git
+cd mpd2mpris
 pip install -e '.[dev,cover]'   # dev tooling + optional cover deps
 make lint                       # ruff + mypy
 make test                       # pytest
@@ -229,17 +234,17 @@ Run `make lint` and `make test` before opening a PR, and keep commits
 focused (one logical change each). Module layout and responsibilities
 are documented in `CLAUDE.md`.
 
-Filing a bug? Run the daemon with `mpDris2 -v` and paste the verbose log
+Filing a bug? Run the daemon with `mpd2mpris -v` and paste the verbose log
 into the issue.
 
 # Credits
 
-This is an asyncio + dbus-fast rewrite of the original
-[mpDris2](https://github.com/eonpatapon/mpDris2), whose authors are Erik
-Karlsson, Jean-Philippe Braun, Christoph Reiter and Mantas Mikulėnas.
-The Debian packaging traces back to Simon McVittie.
+mpd2mpris (formerly mpDris2) is an asyncio + dbus-fast rewrite of the
+original [mpDris2](https://github.com/eonpatapon/mpDris2), whose authors
+are Erik Karlsson, Jean-Philippe Braun, Christoph Reiter and Mantas
+Mikulėnas. The Debian packaging traces back to Simon McVittie.
 
 # License
 
-mpDris2 is licensed under the GNU General Public License v3.0 or later
+mpd2mpris is licensed under the GNU General Public License v3.0 or later
 (GPL-3.0-or-later). See [COPYING](COPYING) for the full text.

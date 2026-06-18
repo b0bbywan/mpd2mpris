@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mpdris2"
+name = "mpd2mpris"
 description = "MPRIS2 D-Bus bridge for MPD"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -27,21 +27,21 @@ dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "build"]
 cover = ["musicbrainzngs>=0.7"]
 
 [project.scripts]
-mpDris2 = "mpdris2.cli:main"
+mpd2mpris = "mpd2mpris.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/b0bbywan/mpDris2"
+Homepage = "https://github.com/b0bbywan/mpd2mpris"
 
 [tool.setuptools.dynamic]
-version = {attr = "mpdris2.__version__"}
+version = {attr = "mpd2mpris.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["mpdris2*"]
+include = ["mpd2mpris*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
 # Add the repo root so `pytest -q` (not via `python -m pytest`) can
-# still import the mpdris2 package without an editable install.
+# still import the mpd2mpris package without an editable install.
 pythonpath = ["."]
 
 [tool.ruff]
@@ -58,7 +58,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 # The dbus-fast service interface declares D-Bus type signatures as Python
 # annotations ("s", "b", "a{sv}", ...). Ruff parses these as forward
 # references and complains; silence F821/F722 for that file only.
-"mpdris2/mpris.py" = ["F821", "F722", "UP037"]
+"mpd2mpris/mpris.py" = ["F821", "F722", "UP037"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -74,5 +74,5 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # Same dbus-fast signature-as-annotation issue as with ruff: those "s",
 # "b", "a{sv}" strings aren't Python types. Skip mpris.py.
-module = "mpdris2.mpris"
+module = "mpd2mpris.mpris"
 ignore_errors = true

@@ -17,7 +17,7 @@ import mpd
 import pytest
 from dbus_fast import Variant
 
-from mpdris2.bridge import (
+from mpd2mpris.bridge import (
     MpdMprisBridge,
     _is_external_seek,
     _RefreshSnapshot,

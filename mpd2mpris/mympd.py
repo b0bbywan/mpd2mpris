@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 
-from mpdris2 import _http
+from mpd2mpris import _http
 
 logger = logging.getLogger(__name__)
 

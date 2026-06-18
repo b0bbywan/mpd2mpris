@@ -6,7 +6,7 @@ import argparse
 import configparser
 from pathlib import Path
 
-from mpdris2.cli import (
+from mpd2mpris.cli import (
     _resolve_cdprev,
     _resolve_cover_list,
     _resolve_music_dir,
@@ -58,7 +58,7 @@ def test_read_config_missing_file_uses_defaults(tmp_path: Path) -> None:
 
 
 def test_read_config_parses_ini(tmp_path: Path) -> None:
-    p = tmp_path / "mpDris2.conf"
+    p = tmp_path / "mpd2mpris.conf"
     p.write_text(
         "[Connection]\n"
         "host = mpd.example\n"
@@ -75,7 +75,7 @@ def test_read_config_parses_ini(tmp_path: Path) -> None:
 
 def test_read_config_no_argument_empty_when_no_file(tmp_path: Path, monkeypatch) -> None:
     # No arg → search the default paths; nothing present → empty parser, no raise.
-    monkeypatch.setattr("mpdris2.cli._config_paths", lambda: [tmp_path / "absent.conf"])
+    monkeypatch.setattr("mpd2mpris.cli._config_paths", lambda: [tmp_path / "absent.conf"])
     cfg = read_config(None)
     assert cfg.sections() == []
 
@@ -84,7 +84,7 @@ def test_read_config_honours_xdg_config_home(tmp_path: Path, monkeypatch) -> Non
     # XDG_CONFIG_HOME is resolved live, and its file is found before the
     # system fallback (it's first in the search order).
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    cfgfile = tmp_path / "mpDris2" / "mpDris2.conf"
+    cfgfile = tmp_path / "mpd2mpris" / "mpd2mpris.conf"
     cfgfile.parent.mkdir(parents=True)
     cfgfile.write_text("[Connection]\nhost = xdg.example\n")
     cfg = read_config(None)

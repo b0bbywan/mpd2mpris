@@ -1,0 +1,3 @@
+data/user/mpd2mpris.service usr/lib/systemd/user/
+data/dbus-1/org.mpris.MediaPlayer2.mpd.service usr/share/dbus-1/services/
+data/mpd2mpris.conf usr/share/doc/mpd2mpris/

@@ -1,5 +1,5 @@
 [Unit]
-Description=mpDris2 - Music Player Daemon D-Bus bridge
+Description=mpd2mpris - Music Player Daemon D-Bus bridge
 ConditionUser=!root
 ConditionUser=!@system
 
@@ -7,7 +7,7 @@ ConditionUser=!@system
 Type=dbus
 BusName=org.mpris.MediaPlayer2.mpd
 Restart=on-failure
-ExecStart=/usr/bin/mpDris2 --use-journal
+ExecStart=/usr/bin/mpd2mpris --use-journal
 
 [Install]
 WantedBy=default.target
