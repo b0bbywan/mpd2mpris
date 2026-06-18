@@ -1,12 +1,13 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpd2mpris"
 description = "MPRIS2 D-Bus bridge for MPD"
 readme = "README.md"
-license = {text = "GPL-3.0-or-later"}
+license = "GPL-3.0-or-later"
+license-files = ["COPYING"]
 authors = [{name = "Mathieu Réquillart", email = "mathieu.requillart@gmail.com"}]
 requires-python = ">=3.11"
 classifiers = [
