@@ -13,7 +13,7 @@ import logging
 import urllib.parse
 from typing import Any
 
-from mpdris2 import _http
+from mpd2mpris import _http
 
 logger = logging.getLogger(__name__)
 

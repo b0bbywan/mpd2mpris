@@ -13,11 +13,11 @@ dist/
 debian/.debhelper/
 debian/debhelper-build-stamp
 debian/files
-debian/mpdris2/
-debian/mpdris2.debhelper.log
-debian/mpdris2.postinst.debhelper
-debian/mpdris2.postrm.debhelper
-debian/mpdris2.substvars
+debian/mpd2mpris/
+debian/mpd2mpris.debhelper.log
+debian/mpd2mpris.postinst.debhelper
+debian/mpd2mpris.postrm.debhelper
+debian/mpd2mpris.substvars
 debian/tmp/
 *.deb
 *.buildinfo

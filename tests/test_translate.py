@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mpdris2.translate import (
+from mpd2mpris.translate import (
     artist_matches,
     first,
     loop_status_from,

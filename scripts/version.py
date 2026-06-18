@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Version helpers — ``mpdris2/__init__.py`` is the source of truth.
+"""Version helpers — ``mpd2mpris/__init__.py`` is the source of truth.
 
 Usage:
     version.py                  print PEP 440 version
@@ -16,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 
-INIT = Path(__file__).resolve().parent.parent / "mpdris2" / "__init__.py"
+INIT = Path(__file__).resolve().parent.parent / "mpd2mpris" / "__init__.py"
 
 
 def read_version() -> str:

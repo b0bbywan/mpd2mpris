@@ -1,4 +1,4 @@
-Source: mpdris2
+Source: mpd2mpris
 Section: sound
 Priority: optional
 Maintainer: Mathieu Réquillart <mathieu.requillart@gmail.com>
@@ -10,11 +10,11 @@ Build-Depends:
  python3-setuptools,
 Rules-Requires-Root: no
 Standards-Version: 4.7.0
-Homepage: https://github.com/b0bbywan/mpDris2
-Vcs-Git: https://github.com/b0bbywan/mpDris2.git
-Vcs-Browser: https://github.com/b0bbywan/mpDris2
+Homepage: https://github.com/b0bbywan/mpd2mpris
+Vcs-Git: https://github.com/b0bbywan/mpd2mpris.git
+Vcs-Browser: https://github.com/b0bbywan/mpd2mpris
 
-Package: mpdris2
+Package: mpd2mpris
 Architecture: all
 Multi-Arch: foreign
 Depends:
@@ -31,8 +31,13 @@ Suggests:
  python3-systemd,
 Provides:
  mpd-client,
+ mpdris2,
+Conflicts:
+ mpdris2,
+Replaces:
+ mpdris2,
 Description: media player interface (MPRIS2) bridge for MPD
- mpDris2 is an implementation of the MPRIS2 media player interface as a
+ mpd2mpris is an implementation of the MPRIS2 media player interface as a
  client for MPD, allowing MPRIS2 clients to control MPD and observe its
  track changes via a standard D-Bus interface. The daemon runs entirely
  on asyncio: python-mpd2 for the MPD protocol and dbus-fast for the

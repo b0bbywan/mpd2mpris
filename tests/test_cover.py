@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from mpdris2.cover import (
+from mpd2mpris.cover import (
     CoverFinder,
     CoverFinderConfig,
     SongLookup,
@@ -63,7 +63,7 @@ def test_detect_mime_unknown_returns_none(data: bytes) -> None:
     "front.jpeg",
 ])
 def test_default_cover_regex_matches(name: str) -> None:
-    from mpdris2.cover import DEFAULT_COVER_REGEX
+    from mpd2mpris.cover import DEFAULT_COVER_REGEX
     assert DEFAULT_COVER_REGEX.match(name)
 
 
@@ -71,7 +71,7 @@ def test_default_cover_regex_matches(name: str) -> None:
     "song.flac", "readme.txt", "cover.txt", "back.jpg", "cover.tiff",
 ])
 def test_default_cover_regex_rejects(name: str) -> None:
-    from mpdris2.cover import DEFAULT_COVER_REGEX
+    from mpd2mpris.cover import DEFAULT_COVER_REGEX
     assert not DEFAULT_COVER_REGEX.match(name)
 
 
@@ -281,15 +281,15 @@ def _async_return(value: object):
 
 
 def _patch_track_sources(monkeypatch, mb=None, it=None, dz=None) -> None:
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track", _async_return(mb))
-    monkeypatch.setattr("mpdris2.cover.itunes.cover_for_track", _async_return(it))
-    monkeypatch.setattr("mpdris2.cover.deezer.cover_for_track", _async_return(dz))
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_for_track", _async_return(mb))
+    monkeypatch.setattr("mpd2mpris.cover.itunes.cover_for_track", _async_return(it))
+    monkeypatch.setattr("mpd2mpris.cover.deezer.cover_for_track", _async_return(dz))
 
 
 @pytest.mark.asyncio
 async def test_cover_for_title_unparseable_skips_query(monkeypatch) -> None:
     calls: list = []
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track",
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_for_track",
                         lambda *a: calls.append(a))
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz",)))
     assert await cf._remote_cover_for_title("bare station name") is None
@@ -328,7 +328,7 @@ async def test_cover_for_title_memoises(monkeypatch) -> None:
         calls.append((artist, track))
         return _CAA
 
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track", _mb)
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_for_track", _mb)
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz",)))
     assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA
     assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA
@@ -345,7 +345,7 @@ async def test_cover_for_title_not_cached_on_transient_error(monkeypatch) -> Non
             raise OSError("transient")
         return _CAA
 
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_for_track", _mb)
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_for_track", _mb)
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz",)))
     assert await cf._remote_cover_for_title("Mato - 1980 Dub") is None  # errored → not cached
     assert await cf._remote_cover_for_title("Mato - 1980 Dub") == _CAA  # retried
@@ -353,9 +353,9 @@ async def test_cover_for_title_not_cached_on_transient_error(monkeypatch) -> Non
 
 
 def _patch_sources(monkeypatch, mb=None, it=None, dz=None) -> None:
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _async_return(mb))
-    monkeypatch.setattr("mpdris2.cover.itunes.cover_url", _async_return(it))
-    monkeypatch.setattr("mpdris2.cover.deezer.cover_url", _async_return(dz))
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_url", _async_return(mb))
+    monkeypatch.setattr("mpd2mpris.cover.itunes.cover_url", _async_return(it))
+    monkeypatch.setattr("mpd2mpris.cover.deezer.cover_url", _async_return(dz))
 
 
 _CAA = "https://coverartarchive.org/release/rel-1/front-500.jpg"
@@ -387,8 +387,8 @@ async def test_remote_cover_short_circuits_after_first_hit(monkeypatch) -> None:
         it_calls.append((artist, album))
         return _ITU
 
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _async_return(_CAA))
-    monkeypatch.setattr("mpdris2.cover.itunes.cover_url", _it)
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_url", _async_return(_CAA))
+    monkeypatch.setattr("mpd2mpris.cover.itunes.cover_url", _it)
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz", "itunes")))
     assert await cf._remote_cover("A", "B") == _CAA
     assert it_calls == []  # itunes never queried — musicbrainz already answered
@@ -425,9 +425,9 @@ async def test_remote_cover_memoises(monkeypatch) -> None:
         calls.append((artist, album))
         return _CAA
 
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
-    monkeypatch.setattr("mpdris2.cover.itunes.cover_url", _async_return(None))
-    monkeypatch.setattr("mpdris2.cover.deezer.cover_url", _async_return(None))
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_url", _mb)
+    monkeypatch.setattr("mpd2mpris.cover.itunes.cover_url", _async_return(None))
+    monkeypatch.setattr("mpd2mpris.cover.deezer.cover_url", _async_return(None))
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz",)))
     assert await cf._remote_cover("A", "B") == _CAA
     assert await cf._remote_cover("A", "B") == _CAA
@@ -446,7 +446,7 @@ async def test_remote_cover_not_cached_on_transient_error(monkeypatch) -> None:
             raise OSError("transient")
         return _CAA
 
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_url", _mb)
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz",)))
     assert await cf._remote_cover("A", "B") is None  # errored → not cached
     assert await cf._remote_cover("A", "B") == _CAA  # retried, now resolves
@@ -462,7 +462,7 @@ async def test_remote_cover_caches_confirmed_miss(monkeypatch) -> None:
         calls.append((artist, album))
         return None
 
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _mb)
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_url", _mb)
     cf = CoverFinder(CoverFinderConfig(cover_sources=("musicbrainz",)))
     assert await cf._remote_cover("A", "B") is None
     assert await cf._remote_cover("A", "B") is None
@@ -472,8 +472,8 @@ async def test_remote_cover_caches_confirmed_miss(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_remote_cover_order_follows_config(monkeypatch) -> None:
     # Priority follows the configured list order, not the registry order.
-    monkeypatch.setattr("mpdris2.cover.musicbrainz.cover_url", _async_return("mb"))
-    monkeypatch.setattr("mpdris2.cover.deezer.cover_url", _async_return("dz"))
+    monkeypatch.setattr("mpd2mpris.cover.musicbrainz.cover_url", _async_return("mb"))
+    monkeypatch.setattr("mpd2mpris.cover.deezer.cover_url", _async_return("dz"))
     cf = CoverFinder(CoverFinderConfig(cover_sources=("deezer", "musicbrainz")))
     assert await cf._remote_cover("A", "B") == "dz"
 
@@ -498,7 +498,7 @@ async def test_stream_cover_skips_non_http(monkeypatch) -> None:
         calls.append(url)
         return "https://x/favicon.ico"
 
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _icon)
     cf = CoverFinder(CoverFinderConfig(stream_sources=("radiobrowser",)))
     assert await cf._stream_cover("relative/track.flac") is None
     assert calls == []  # not an http(s) stream → never queried
@@ -512,7 +512,7 @@ async def test_stream_cover_returns_url_and_memoises(monkeypatch) -> None:
         calls.append(url)
         return "https://x/favicon.ico"
 
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _icon)
     cf = CoverFinder(CoverFinderConfig(stream_sources=("radiobrowser",)))
     stream = "http://hd.example.info/reggae-192.mp3"
     assert await cf._stream_cover(stream) == "https://x/favicon.ico"
@@ -530,7 +530,7 @@ async def test_stream_cover_not_cached_on_transient_error(monkeypatch) -> None:
             raise OSError("transient")
         return "https://x/favicon.ico"
 
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _icon)
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _icon)
     cf = CoverFinder(CoverFinderConfig(stream_sources=("radiobrowser",)))
     stream = "http://hd.example.info/reggae-192.mp3"
     assert await cf._stream_cover(stream) is None  # errored → not cached
@@ -545,7 +545,7 @@ async def test_stream_cover_mympd_passes_configured_base_url(monkeypatch) -> Non
         calls.append((base, stream))
         return _WDB
 
-    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _cover)
+    monkeypatch.setattr("mpd2mpris.cover.mympd.cover_url", _cover)
     cf = CoverFinder(CoverFinderConfig(stream_sources=("mympd",), mympd_url="http://host:8080"))
     stream = "http://absolut.example/coffee.mp3"
     assert await cf._stream_cover(stream) == _WDB
@@ -554,15 +554,15 @@ async def test_stream_cover_mympd_passes_configured_base_url(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_stream_cover_default_off(monkeypatch) -> None:
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
     cf = CoverFinder()  # no stream_sources
     assert await cf._stream_cover("http://stream") is None
 
 
 @pytest.mark.asyncio
 async def test_stream_cover_order_follows_config(monkeypatch) -> None:
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
-    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
+    monkeypatch.setattr("mpd2mpris.cover.mympd.cover_url", _async_return(_WDB))
     # radiobrowser listed first → it wins over myMPD this time.
     cf = CoverFinder(CoverFinderConfig(
         stream_sources=("radiobrowser", "mympd"), mympd_url="http://host:8080",
@@ -572,14 +572,14 @@ async def test_stream_cover_order_follows_config(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_stream_cover_mympd_listed_without_uri_skipped(monkeypatch) -> None:
-    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    monkeypatch.setattr("mpd2mpris.cover.mympd.cover_url", _async_return(_WDB))
     cf = CoverFinder(CoverFinderConfig(stream_sources=("mympd",)))  # no mympd_url
     assert await cf._stream_cover("http://stream") is None  # mympd skipped at init
 
 
 @pytest.mark.asyncio
 async def test_stream_cover_unknown_source_ignored(monkeypatch) -> None:
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _async_return("https://x/fav.ico"))
     cf = CoverFinder(CoverFinderConfig(stream_sources=("bogus", "radiobrowser")))
     assert await cf._stream_cover("http://stream") == "https://x/fav.ico"
 
@@ -714,8 +714,8 @@ async def test_find_prefers_mympd_cover_over_favicon(
     # Steps 1-5 miss (web-radio stream, no key); both stream sources resolve
     # — myMPD is listed first, so its curated cover wins.
     _patch_sources(monkeypatch)
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
-    monkeypatch.setattr("mpdris2.cover.mympd.cover_url", _async_return(_WDB))
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
+    monkeypatch.setattr("mpd2mpris.cover.mympd.cover_url", _async_return(_WDB))
     cf = CoverFinder(CoverFinderConfig(
         stream_sources=("mympd", "radiobrowser"), mympd_url="http://host:8080",
     ))
@@ -734,7 +734,7 @@ async def test_find_falls_back_to_favicon_without_mympd(
 ) -> None:
     # myMPD listed but no mympd_url (skipped) — the favicon still serves.
     _patch_sources(monkeypatch)
-    monkeypatch.setattr("mpdris2.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
+    monkeypatch.setattr("mpd2mpris.cover.radiobrowser.station_icon", _async_return("https://x/favicon.ico"))
     cf = CoverFinder(CoverFinderConfig(stream_sources=("mympd", "radiobrowser")))  # no mympd_url
     uri = await cf.find(SongLookup(
         client=_client_with(),

@@ -1,6 +1,6 @@
 """Shared stdlib HTTP for the no-auth cover-art fallbacks
 (``deezer`` / ``itunes`` / ``mympd`` / ``radiobrowser``): a thin urllib
-wrapper carrying mpDris2's User-Agent + timeout.
+wrapper carrying mpd2mpris's User-Agent + timeout.
 
 The loose artist matcher those modules use lives in ``translate``
 (``artist_matches``). ``musicbrainz`` goes through ``musicbrainzngs`` and
@@ -16,8 +16,8 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from mpdris2 import APP, URL, __version__
-from mpdris2.translate import artist_matches
+from mpd2mpris import APP, URL, __version__
+from mpd2mpris.translate import artist_matches
 
 logger = logging.getLogger(__name__)
 

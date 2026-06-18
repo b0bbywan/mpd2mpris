@@ -1,14 +1,14 @@
-.TH MPDRIS2 1 "June 2026" "" "D-Bus services"
+.TH MPD2MPRIS 1 "June 2026" "" "D-Bus services"
 .\" Copyright © 2012-2016 Simon McVittie
 .\" Copyright © 2026 Mathieu Réquillart (asyncio / dbus-fast rewrite)
 .\" It may be distributed under the same terms as mpDris2 itself.
 .SH NAME
-mpDris2 \- media player interface (MPRIS2) bridge for MPD
+mpd2mpris \- media player interface (MPRIS2) bridge for MPD
 .SH SYNOPSIS
-.BR mpDris2
+.BR mpd2mpris
 .RI [ OPTIONS ]
 .SH DESCRIPTION
-.B mpDris2
+.B mpd2mpris
 is an implementation of the MPRIS2 media player interface as a
 client for MPD, allowing MPRIS2 clients to control MPD and observe its
 track changes via a standard D-Bus interface. The daemon runs entirely
@@ -17,7 +17,7 @@ on asyncio (python-mpd2 + dbus-fast).
 It is normally run automatically via D-Bus service activation, or as a
 systemd user unit.
 .PP
-On each track change mpDris2 resolves cover art off the critical path and
+On each track change mpd2mpris resolves cover art off the critical path and
 exposes it as \fImpris:artUrl\fR. It tries, in order: the embedded
 picture (MPD \fBreadpicture\fR), a regex match in the song's directory,
 MPD \fBalbumart\fR, a cover beside a CUE/cdda playlist, and \(em when
@@ -26,11 +26,11 @@ and, for web-radio streams, the station favicon (radio-browser) or a
 myMPD WebradioDB cover. Remote sources are opt-in and only ever yield a
 URL; the images themselves are never downloaded.
 .SH CONFIGURATION
-\fBmpDris2\fR is normally configured via the file
-\fIXDG_CONFIG_HOME\fB/mpDris2/mpDris2.conf\fR (typically
-\fB~/.config/mpDris2/mpDris2.conf\fR), with
-\fI/etc/mpDris2/mpDris2.conf\fR as a system-wide fallback. An example
-configuration ships at \fB/usr/share/doc/mpdris2/mpdris2.conf\fR.
+\fBmpd2mpris\fR is normally configured via the file
+\fIXDG_CONFIG_HOME\fB/mpd2mpris/mpd2mpris.conf\fR (typically
+\fB~/.config/mpd2mpris/mpd2mpris.conf\fR), with
+\fI/etc/mpd2mpris/mpd2mpris.conf\fR as a system-wide fallback. An example
+configuration ships at \fB/usr/share/doc/mpd2mpris/mpd2mpris.conf\fR.
 Settings in the configuration file can be overridden by command-line
 options and environment variables.
 .SH OPTIONS

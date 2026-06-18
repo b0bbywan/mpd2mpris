@@ -1,4 +1,4 @@
-# Dev / CI helpers. `mpdris2/__init__.py` is the version source of truth;
+# Dev / CI helpers. `mpd2mpris/__init__.py` is the version source of truth;
 # this Makefile drives lint / test / build / deb and keeps the
 # debian/changelog in sync with the Python version, no logic duplicated
 # in the workflow YAML.
@@ -39,10 +39,10 @@ sync-deb:
 lint: lint-ruff lint-mypy
 
 lint-ruff:
-	ruff check mpdris2/ tests/
+	ruff check mpd2mpris/ tests/
 
 lint-mypy:
-	mypy mpdris2/
+	mypy mpd2mpris/
 
 test:
 	pytest -q
@@ -59,4 +59,4 @@ deb:
 	dpkg-buildpackage -b -us -uc
 
 clean:
-	rm -rf build/ dist/ *.egg-info mpdris2.egg-info
+	rm -rf build/ dist/ *.egg-info mpd2mpris.egg-info

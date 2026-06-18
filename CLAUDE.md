@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-mpDris2 is a Python 3 asyncio daemon that provides MPRIS 2 (Media Player Remote Interfacing Specification) D-Bus interface support for MPD (Music Player Daemon). It monitors a local or remote MPD server and exposes it as an MPRIS2-compliant media player on the session D-Bus, using `python-mpd2` for the MPD protocol and `dbus-fast` for the MPRIS interface. No threads, no GLib.
+mpd2mpris (formerly mpDris2) is a Python 3 asyncio daemon that provides MPRIS 2 (Media Player Remote Interfacing Specification) D-Bus interface support for MPD (Music Player Daemon). It monitors a local or remote MPD server and exposes it as an MPRIS2-compliant media player on the session D-Bus, using `python-mpd2` for the MPD protocol and `dbus-fast` for the MPRIS interface. No threads, no GLib.
 
 ## Build System
 
-`pyproject.toml` (setuptools backend) is the build entry point; `mpdris2/__init__.py` is the version source of truth.
+`pyproject.toml` (setuptools backend) is the build entry point; `mpd2mpris/__init__.py` is the version source of truth.
 
 ```bash
 # Dev install + tooling
@@ -30,12 +30,12 @@ For Nix users, `shell.nix` provides a development shell.
 
 ## Source Structure
 
-Flat package at `mpdris2/`:
+Flat package at `mpd2mpris/`:
 
 | Module | Responsibility |
 |--------|----------------|
 | `__init__.py` | `__version__` (parsed by `scripts/version.py` and `pyproject.toml`) |
-| `__main__.py` | `python -m mpdris2` entry point |
+| `__main__.py` | `python -m mpd2mpris` entry point |
 | `cli.py` | argparse, INI config loading, `asyncio.run(run(cfg, args))` |
 | `bridge.py` | `MpdMprisBridge` — MPD connect/reconnect, D-Bus export, MPRIS callbacks, idle-driven `refresh()` |
 | `mpd_client.py` | `mpd.asyncio.MPDClient` wrapper: connect-with-backoff + capability probe |
@@ -62,7 +62,7 @@ Dev: `pytest`, `pytest-asyncio`, `mypy`, `ruff`, `build`.
 
 ## Configuration
 
-User config at `~/.config/mpDris2/mpDris2.conf` (INI), falling back to `/etc/mpDris2/mpDris2.conf`. Example shipped at `/usr/share/doc/mpdris2/mpdris2.conf`.
+User config at `~/.config/mpd2mpris/mpd2mpris.conf` (INI), falling back to `/etc/mpd2mpris/mpd2mpris.conf`, then the legacy `~/.config/mpDris2/mpDris2.conf` and `/etc/mpDris2/mpDris2.conf` (pre-rename paths, still honoured). Example shipped at `/usr/share/doc/mpd2mpris/mpd2mpris.conf`.
 
 Sections in current use:
 - `[Connection]` — `host`, `port`, `password`
@@ -74,8 +74,8 @@ CLI overrides config: `-H`/`--host`, `-p`/`--port`, `--music-dir`, `--config`, `
 
 ## Packaging
 
-- **Debian**: `debian/` uses `pybuild-plugin-pyproject` (no autotools). Data files (`data/*.{service,conf}`) are listed in `debian/mpdris2.install`.
-- **Systemd**: user unit `data/user/mpDris2.service` (`Type=dbus`, `BusName=org.mpris.MediaPlayer2.mpd`, `Restart=on-failure`, `ConditionUser=!root` / `ConditionUser=!@system`). Not auto-enabled on install — D-Bus activation kicks it in on the first MPRIS call.
+- **Debian**: `debian/` uses `pybuild-plugin-pyproject` (no autotools). Data files (`data/*.{service,conf}`) are listed in `debian/mpd2mpris.install`.
+- **Systemd**: user unit `data/user/mpd2mpris.service` (`Type=dbus`, `BusName=org.mpris.MediaPlayer2.mpd`, `Restart=on-failure`, `ConditionUser=!root` / `ConditionUser=!@system`). Not auto-enabled on install — D-Bus activation kicks it in on the first MPRIS call.
 - **D-Bus activation**: `data/dbus-1/org.mpris.MediaPlayer2.mpd.service` → `/usr/share/dbus-1/services/`.
 - **CI**: `.github/workflows/build.yml` runs lint + tests on every PR, builds the `.deb` in a `debian:trixie` container on tags, creates a GitHub release, and dispatches to the private `b0bbywan/odio-apt-repo` for APT-repo rebuild.
 

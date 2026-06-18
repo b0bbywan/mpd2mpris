@@ -1,6 +1,6 @@
-__version__ = "0.11.1"
+__version__ = "0.12.0"
 
 # Project identity, shared by the HTTP User-Agent (``_http``) and the
 # MusicBrainz client (``musicbrainz.set_useragent``).
-APP = "mpDris2"
-URL = "https://github.com/b0bbywan/mpDris2"
+APP = "mpd2mpris"
+URL = "https://github.com/b0bbywan/mpd2mpris"

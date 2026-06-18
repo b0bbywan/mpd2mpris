@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from mpdris2 import musicbrainz
+from mpd2mpris import musicbrainz
 
 _COVER = "https://coverartarchive.org/release/rel-1/front-500.jpg"
 

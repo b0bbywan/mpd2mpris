@@ -1,6 +1,6 @@
 """CLI entry point: argparse + config loading + asyncio dispatch.
 
-Kept separate from the bridge runtime (``mpdris2.bridge``) so the
+Kept separate from the bridge runtime (``mpd2mpris.bridge``) so the
 bootstrap surface (argument parsing, config resolution) is testable in
 isolation from the asyncio event loop.
 """
@@ -21,20 +21,25 @@ from pathlib import Path
 from dbus_fast import BusType
 from dbus_fast.aio import MessageBus
 
-from mpdris2.bridge import BridgeConfig, MpdMprisBridge
-from mpdris2.cover import DEFAULT_COVER_REGEX, CoverFinderConfig
-from mpdris2.mpd_client import is_unix_socket
+from mpd2mpris.bridge import BridgeConfig, MpdMprisBridge
+from mpd2mpris.cover import DEFAULT_COVER_REGEX, CoverFinderConfig
+from mpd2mpris.mpd_client import is_unix_socket
 
-logger = logging.getLogger("mpdris2")
+logger = logging.getLogger("mpd2mpris")
 
 BUS_CONNECT_TIMEOUT = 10.0
 
 def _config_paths() -> list[Path]:
     """Default config search path, resolved at call time so ``XDG_CONFIG_HOME``
-    is honoured live (the user's ``~/.config`` first, the system file next)."""
+    is honoured live (the user's ``~/.config`` first, the system file next).
+
+    The new ``mpd2mpris`` paths win; the legacy ``mpDris2`` paths are kept as a
+    fallback so configs from before the rename keep working untouched."""
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     return [
-        Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-        / "mpDris2" / "mpDris2.conf",
+        xdg / "mpd2mpris" / "mpd2mpris.conf",
+        Path("/etc/mpd2mpris/mpd2mpris.conf"),
+        xdg / "mpDris2" / "mpDris2.conf",
         Path("/etc/mpDris2/mpDris2.conf"),
     ]
 
@@ -177,7 +182,7 @@ def build_bridge_config(
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="mpDris2",
+        prog="mpd2mpris",
         description="MPRIS2 D-Bus bridge for MPD.",
     )
     p.add_argument("-v", "--verbose", action="store_true",

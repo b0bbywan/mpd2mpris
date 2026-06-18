@@ -14,7 +14,7 @@ import urllib.request
 
 import pytest
 
-from mpdris2 import _http
+from mpd2mpris import _http
 
 
 class _Resp:

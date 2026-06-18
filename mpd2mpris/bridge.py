@@ -26,19 +26,19 @@ from dbus_fast import Variant
 from dbus_fast.aio import MessageBus
 from mpd.asyncio import MPDClient
 
-from mpdris2 import mpd_client
-from mpdris2.cover import (
+from mpd2mpris import mpd_client
+from mpd2mpris.cover import (
     CoverFinder,
     CoverFinderConfig,
     SongLookup,
 )
-from mpdris2.mpris import (
+from mpd2mpris.mpris import (
     BUS_NAME,
     ROOT_PATH,
     MediaPlayer2,
     MediaPlayer2Player,
 )
-from mpdris2.translate import (
+from mpd2mpris.translate import (
     DEFAULT_URL_HANDLERS,
     loop_status_from,
     mpd_to_mpris,
@@ -78,7 +78,7 @@ class BridgeConfig:
 
 # --- Bridge-local helpers -------------------------------------------------
 # Pure MPD→MPRIS shape conversions (``parse_volume``, ``loop_status_from``,
-# ``song_url`` …) live in ``mpdris2.translate``. What stays here is either
+# ``song_url`` …) live in ``mpd2mpris.translate``. What stays here is either
 # stateful (the refresh diff) or a heuristic that's specific to the bridge's
 # refresh cadence (external-seek detection).
 
