@@ -28,7 +28,6 @@ Recommends:
  python3-musicbrainzngs,
 Suggests:
  mpd,
- python3-systemd,
 Provides:
  mpd-client,
  mpdris2,
