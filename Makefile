@@ -6,7 +6,7 @@
 PYTHON  ?= python3
 VERSION := $(PYTHON) scripts/version.py
 
-.PHONY: version deb-version check-tag sync-deb \
+.PHONY: version deb-version check-tag sync-deb sync-arch check-arch \
         lint lint-ruff lint-mypy test build deb clean
 
 # --- version helpers ---------------------------------------------------
@@ -33,6 +33,23 @@ sync-deb:
 		dch -b --newversion "$$deb" --distribution unstable \
 			--urgency medium "Release $$deb"; \
 	fi
+
+PKGBUILD := packaging/arch/PKGBUILD
+
+# Set pkgver/_tag in the PKGBUILD from __init__.py; pkgrel back to 1 on a
+# new version. Idempotent.
+sync-arch:
+	@v=$$($(VERSION)); t=$$($(VERSION) --tag); \
+	if ! grep -qx "pkgver=$$v" $(PKGBUILD); then \
+		sed -i -e "s/^pkgver=.*/pkgver=$$v/" -e "s/^_tag=.*/_tag=$$t/" \
+			-e "s/^pkgrel=.*/pkgrel=1/" $(PKGBUILD); \
+	fi
+
+# Fail if the PKGBUILD lags behind __init__.py.
+check-arch:
+	@v=$$($(VERSION)); t=$$($(VERSION) --tag); \
+	grep -qx "pkgver=$$v" $(PKGBUILD) && grep -qx "_tag=$$t" $(PKGBUILD) || \
+		{ echo "$(PKGBUILD) is not at $$v ($$t): run make sync-arch" >&2; exit 1; }
 
 # --- dev workflow ------------------------------------------------------
 
