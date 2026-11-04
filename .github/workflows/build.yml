@@ -33,6 +33,27 @@ jobs:
         if: always()
         run: make test
 
+  # Tests against the python3-* packages the .deb runs on; python-mpd2
+  # 3.1.2 is only in the distros, not on PyPI.
+  test-distro:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:trixie', 'debian:testing', 'ubuntu:24.04', 'ubuntu:26.04']
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Install system deps
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3-mpd python3-dbus-fast python3-musicbrainzngs \
+            python3-pytest python3-pytest-asyncio
+      - uses: actions/checkout@v7
+      - name: Pytest
+        run: python3 -m pytest -q
+
   deb:
     runs-on: ubuntu-latest
     # Build inside the same Debian release we target (trixie) so dh-python,
@@ -93,7 +114,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [lint, deb, build]
+    needs: [lint, test-distro, deb, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
