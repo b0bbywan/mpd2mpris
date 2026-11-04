@@ -178,8 +178,9 @@ make sync-deb       # bump debian/changelog to match __init__.py
 ```
 
 `mpd2mpris/__init__.py` is the single source of truth for the version;
-`make sync-deb` and `make check-tag TAG=…` keep `debian/changelog`
-and the git tag aligned with it.
+`make sync-deb`, `make sync-arch` and `make check-tag TAG=…` keep
+`debian/changelog`, `packaging/arch/PKGBUILD` and the git tag aligned
+with it.
 
 # Build a .deb
 
@@ -188,6 +189,17 @@ Build-deps (per `debian/control`): `debhelper-compat (= 13)`,
 Debian trixie or a derivative produces the `.deb`. The runtime deps
 (`python3-mpd`, `python3-dbus-fast`) are resolved by APT at install
 time, not at build time.
+
+# Build an Arch package
+
+`packaging/arch/PKGBUILD` builds the tagged release from GitHub; the
+dependencies come from Arch's official repositories:
+
+```sh
+cd packaging/arch && makepkg -si
+```
+
+It is not published on the AUR. CI builds it from each commit.
 
 # Cover art
 

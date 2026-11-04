@@ -1,0 +1,38 @@
+# Maintainer: Mathieu Réquillart <mathieu.requillart@gmail.com>
+# pkgver and _tag follow mpd2mpris/__init__.py: `make sync-arch`.
+
+pkgname=mpd2mpris
+pkgver=0.13.0
+_tag=v0.13.0
+pkgrel=1
+pkgdesc="MPRIS2 D-Bus bridge for MPD"
+arch=(any)
+url="https://github.com/b0bbywan/mpd2mpris"
+license=(GPL-3.0-or-later)
+depends=(python python-mpd2 python-dbus-fast)
+makedepends=(git python-build python-installer python-setuptools)
+checkdepends=(python-pytest python-pytest-asyncio)
+optdepends=('python-musicbrainzngs: MusicBrainz / Cover Art Archive cover lookup')
+# Both own the org.mpris.MediaPlayer2.mpd bus name
+conflicts=(mpdris2)
+source=("$pkgname::git+https://github.com/b0bbywan/mpd2mpris.git#tag=$_tag")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname"
+  python -m pytest -q
+}
+
+package() {
+  cd "$pkgname"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 data/user/mpd2mpris.service -t "$pkgdir/usr/lib/systemd/user/"
+  install -Dm644 data/dbus-1/org.mpris.MediaPlayer2.mpd.service -t "$pkgdir/usr/share/dbus-1/services/"
+  install -Dm644 data/mpd2mpris.conf -t "$pkgdir/usr/share/doc/$pkgname/"
+  install -Dm644 data/mpd2mpris.1 -t "$pkgdir/usr/share/man/man1/"
+}
