@@ -2,8 +2,8 @@
 # pkgver and _tag follow mpd2mpris/__init__.py: `make sync-arch`.
 
 pkgname=mpd2mpris
-pkgver=0.13.0
-_tag=v0.13.0
+pkgver=0.13.1
+_tag=v0.13.1
 pkgrel=1
 pkgdesc="MPRIS2 D-Bus bridge for MPD"
 arch=(any)
