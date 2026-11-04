@@ -1,3 +1,14 @@
+mpd2mpris (0.13.1~beta.1) unstable; urgency=medium
+
+  * Fix a crash with python-mpd2 3.1.2 (Ubuntu 26.04, Debian testing,
+    Arch) when connected over MPD's socket with no music_dir set: the
+    config probe now uses the library's config command, which 3.1.2
+    parses fully.
+  * CI runs the tests on the python3 packages of Debian trixie and
+    testing, Ubuntu 24.04 and 26.04, and builds an Arch package.
+
+ -- Mathieu Réquillart <mathieu.requillart@gmail.com>  Wed, 04 Nov 2026 23:41:50 +0000
+
 mpd2mpris (0.13.0) unstable; urgency=medium
 
   * New MPRIS TrackList interface exposing the MPD queue: queue changes
