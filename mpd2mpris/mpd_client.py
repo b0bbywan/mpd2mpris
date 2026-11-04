@@ -73,10 +73,24 @@ async def connect(
 
 
 async def fetch_config(client: MPDClient) -> dict[str, str]:
-    """Send MPD's ``config`` command and parse its multi-pair response as a
-    dict — python-mpd2 3.1.x mis-parses it (its handler reads only single-pair
-    responses, dropping the data), so we reuse the lib's command queue with a
-    dict-parsing callback. Socket-only (TCP gets "Access denied").
+    """Send MPD's ``config`` command and return its pairs as a dict.
+    Socket-only (TCP gets "Access denied").
+    """
+    if mpd.VERSION < (3, 1, 2):
+        return await _fetch_config_raw(client)
+    try:
+        async with asyncio.timeout(CONFIG_PROBE_TIMEOUT):
+            parsed: dict[str, str] = await client.config()
+    except TimeoutError as e:
+        logger.debug("config probe gave up: %s", e)
+        return {}
+    return parsed
+
+
+async def _fetch_config_raw(client: MPDClient) -> dict[str, str]:
+    """python-mpd2 < 3.1.2 mis-parses ``config`` (its handler reads only
+    single-pair responses, dropping the data), so we reuse the lib's command
+    queue with a dict-parsing callback.
     """
     def _parse_as_dict(client_: MPDClient, lines: list) -> dict[str, str]:
         return dict(client_._parse_pairs(lines))
@@ -87,7 +101,7 @@ async def fetch_config(client: MPDClient) -> dict[str, str]:
         # class; access it via the mangled attribute name.
         await client._MPDClient__command_queue.put(result)
         client._end_idle()
-        client._write_command("config")
+        client._write_command("config", [])
     except AttributeError as e:
         logger.warning("python-mpd2 private API moved (%s); skipping config probe", e)
         return {}
