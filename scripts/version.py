@@ -4,6 +4,7 @@
 Usage:
     version.py                  print PEP 440 version
     version.py --debian         print Debian-sortable equivalent
+    version.py --tag            print the canonical git tag
     version.py --check-tag TAG  exit 1 if TAG doesn't match (vX prefix optional)
 
 Parses __init__.py directly (no import), so the script works without the
@@ -36,6 +37,20 @@ def to_debian(v: str) -> str:
     return v
 
 
+TAG_KINDS = {"rc": "rc", "b": "beta", "a": "alpha"}
+
+
+def to_tag(v: str) -> str:
+    """PEP 440 version -> canonical tag (vX.Y.Z or vX.Y.Z-{rc,beta,alpha}.N)."""
+    m = re.match(r"^(\d+\.\d+\.\d+)(?:(rc|b|a)(\d+))?$", v)
+    if not m:
+        sys.exit(f"version {v!r} has no canonical tag form")
+    base, kind, n = m.groups()
+    if kind is None:
+        return f"v{base}"
+    return f"v{base}-{TAG_KINDS[kind]}.{n}"
+
+
 TAG_RE = re.compile(r"^v?(\d+\.\d+\.\d+)(?:-(rc|beta|alpha)\.(\d+))?$")
 
 
@@ -64,6 +79,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = p.add_mutually_exclusive_group()
     g.add_argument("--debian", action="store_true", help="print Debian-sortable version")
+    g.add_argument("--tag", action="store_true", help="print the canonical git tag")
     g.add_argument("--check-tag", metavar="TAG", help="exit 1 if TAG doesn't match __init__.py")
     args = p.parse_args()
 
@@ -72,6 +88,9 @@ def main() -> None:
         tag = normalize_tag(args.check_tag)
         if tag != v:
             sys.exit(f"tag {args.check_tag!r} does not match __init__.py version {v!r}")
+        return
+    if args.tag:
+        print(to_tag(v))
         return
     print(to_debian(v) if args.debian else v)
 
