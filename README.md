@@ -23,7 +23,9 @@ mpd2mpris runs in the user session and monitors a local or distant mpd server.
 - [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Development](#development)
+- [Installed files](#installed-files)
 - [Build a .deb](#build-a-deb)
+- [Build an Arch package](#build-an-arch-package)
 - [Cover art](#cover-art)
 - [Used in](#used-in)
 - [Contributing](#contributing)
@@ -76,8 +78,8 @@ pipx install mpd2mpris     # or: pip install --user mpd2mpris
 
 This installs the `mpd2mpris` console script only — no systemd or D-Bus
 service files, unlike the `.deb`. To auto-start it, drop a user unit at
-`~/.config/systemd/user/mpd2mpris.service` (copy `data/user/mpd2mpris.service`)
-and `systemctl --user enable --now mpd2mpris.service`. The optional cover
+`~/.config/systemd/user/mpd2mpris.service` (copy `data/user/mpd2mpris.service`,
+from the repo or the sdist) and `systemctl --user enable --now mpd2mpris.service`. The optional cover
 deps are `pipx install 'mpd2mpris[cover]'`.
 
 ## From git
@@ -175,12 +177,27 @@ make deb            # dpkg-buildpackage -b -us -uc (Debian toolchain)
 make clean          # drop build/, dist/, *.egg-info
 make version        # print the Python version (from __init__.py)
 make sync-deb       # bump debian/changelog to match __init__.py
+make sync-arch      # set pkgver/_tag in packaging/arch/PKGBUILD from __init__.py
+make check-arch     # fail if the PKGBUILD lags behind __init__.py
+make check-tag TAG=vX.Y.Z  # fail if the tag doesn't match __init__.py
 ```
 
 `mpd2mpris/__init__.py` is the single source of truth for the version;
 `make sync-deb`, `make sync-arch` and `make check-tag TAG=…` keep
 `debian/changelog`, `packaging/arch/PKGBUILD` and the git tag aligned
 with it.
+
+# Installed files
+
+`data/` holds everything installed besides the Python package; the
+`.deb`, the PKGBUILD and the sdist all ship it:
+
+| File | Installed to |
+|------|--------------|
+| `data/user/mpd2mpris.service` | `/usr/lib/systemd/user/` |
+| `data/dbus-1/org.mpris.MediaPlayer2.mpd.service` | `/usr/share/dbus-1/services/` |
+| `data/mpd2mpris.conf` | `/usr/share/doc/mpd2mpris/` (sample) |
+| `data/mpd2mpris.1` | `/usr/share/man/man1/` |
 
 # Build a .deb
 

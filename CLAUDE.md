@@ -74,10 +74,12 @@ CLI overrides config: `-H`/`--host`, `-p`/`--port`, `--music-dir`, `--config`, `
 
 ## Packaging
 
-- **Debian**: `debian/` uses `pybuild-plugin-pyproject` (no autotools). Data files (`data/*.{service,conf}`) are listed in `debian/mpd2mpris.install`.
+- **Data files**: `data/` holds everything installed besides the package (units, sample conf, man page `data/mpd2mpris.1`); `MANIFEST.in` grafts it into the sdist.
+- **Debian**: `debian/` uses `pybuild-plugin-pyproject` (no autotools). Data files are listed in `debian/mpd2mpris.install`, the man page in `debian/mpd2mpris.manpages`.
+- **Arch**: `packaging/arch/PKGBUILD` builds the release tag from GitHub (not published on the AUR); `make sync-arch` / `check-arch` keep `pkgver` and `_tag` on `__init__.py`.
 - **Systemd**: user unit `data/user/mpd2mpris.service` (`Type=dbus`, `BusName=org.mpris.MediaPlayer2.mpd`, `Restart=on-failure`, `ConditionUser=!root` / `ConditionUser=!@system`). Not auto-enabled on install — D-Bus activation kicks it in on the first MPRIS call.
 - **D-Bus activation**: `data/dbus-1/org.mpris.MediaPlayer2.mpd.service` → `/usr/share/dbus-1/services/`.
-- **CI**: `.github/workflows/build.yml` runs lint + tests on every PR, builds the `.deb` in a `debian:trixie` container on tags, creates a GitHub release, and dispatches to the private `b0bbywan/odio-apt-repo` for APT-repo rebuild.
+- **CI**: `.github/workflows/build.yml` runs lint + tests on every PR, the tests again on the python3 packages of Debian trixie/testing and Ubuntu 24.04/26.04 (`test-distro`), builds the PKGBUILD from the commit with `makepkg` (`test-arch`), builds the `.deb` in a `debian:trixie` container, and on tags creates a GitHub release and dispatches to the private `b0bbywan/odio-apt-repo` for APT-repo rebuild.
 
 ## Notes
 
