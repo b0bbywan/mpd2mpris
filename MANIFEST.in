@@ -1,0 +1,2 @@
+# Install-time files the distro packages pick up from the sdist
+graft data
